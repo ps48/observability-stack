@@ -36,6 +36,11 @@ otel-logs-pipeline:
       name: "otlp-pipeline"
   buffer:
     bounded_blocking:
+  processor:
+    - copy_values:
+        entries:
+          - from_key: "time"
+            to_key: "@timestamp"
   # Write processed logs to OpenSearch
   sink:
     - opensearch:
