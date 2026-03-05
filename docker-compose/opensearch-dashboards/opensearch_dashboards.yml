@@ -85,7 +85,5 @@ datasetManagement.enabled: true
 data.savedQueriesNewUI.enabled: true
 opensearchDashboards.branding.useExpandedHeader: false
 
-uiSettings.overrides.theme:darkMode: true
-uiSettings.overrides.theme:enableUserControl: false
 uiSettings.overrides.home:useNewHomePage: true
 uiSettings.overrides.query:enhancements:enabled: true

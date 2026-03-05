@@ -219,6 +219,7 @@ services:
       - ./docker-compose/opensearch-dashboards/init/init-opensearch-dashboards.py:/init.py
       - ./docker-compose/opensearch-dashboards/saved-queries-traces.yaml:/config/saved-queries-traces.yaml
       - ./docker-compose/opensearch-dashboards/saved-queries-metrics.yaml:/config/saved-queries-metrics.yaml
+      - ./docker-compose/opensearch-dashboards/init/architecture.png:/config/architecture.png
     networks:
       - observability-stack-network
     restart: "no"
