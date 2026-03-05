@@ -945,6 +945,184 @@ def create_chart_visualization(workspace_id, vis_id, title, vis_type, field, ind
         return None
 
 
+def create_overview_dashboard(workspace_id):
+    """Create an overview landing dashboard with markdown links to all observability features"""
+    import json
+    import base64
+
+    markdown_vis_id = "overview-markdown"
+    dashboard_id = "observability-overview-dashboard"
+
+    # Check if dashboard already exists
+    if get_existing_dashboard(workspace_id, dashboard_id):
+        print("✅ Overview dashboard already exists")
+        set_default_dashboard(workspace_id, dashboard_id)
+        return dashboard_id
+
+    print("📊 Creating Observability Stack overview dashboard...")
+
+    # Load architecture image as base64 data URI
+    arch_img_tag = ""
+    try:
+        with open("/config/architecture.png", "rb") as f:
+            img_b64 = base64.b64encode(f.read()).decode("utf-8")
+            arch_img_tag = f"![Architecture](data:image/png;base64,{img_b64})"
+    except FileNotFoundError:
+        print("⚠️  Architecture image not found, using text fallback")
+        arch_img_tag = "*Agents / Apps → OTel Collector → Data Prepper → OpenSearch + Prometheus*"
+
+    # Build workspace-aware links
+    if workspace_id and workspace_id != "default":
+        w = f"/w/{workspace_id}"
+    else:
+        w = ""
+
+    markdown_text = f"""## Welcome to OpenSearch Observability Stack!
+Your entire stack, fully visible. APM traces, logs, Prometheus metrics, service maps, and AI agent tracing — unified in one open-source platform built for modern infrastructure. Total observability, zero lock-in.
+
+### Architecture
+{arch_img_tag}
+
+---
+
+### Getting started
+1. **Send telemetry** to the OTel Collector via gRPC (`:4317`) or HTTP (`:4318`)
+2. **Explore logs** to see application log events
+3. **Explore traces** to follow requests across services
+4. **Check APM services** for latency, error rates, and throughput
+5. **View the service map** for a visual topology of your system
+
+---
+
+### Explore telemetry
+**Logs** — [Explore logs]({w}/app/explore/logs)
+Search, filter, and analyze application and infrastructure log events.
+
+**Traces** — [Explore traces]({w}/app/explore/traces)
+Follow requests end-to-end across services to pinpoint latency and errors.
+
+**Metrics** — [Explore metrics]({w}/app/explore/metrics)
+Query Prometheus metrics for throughput, latency percentiles, and error rates.
+
+### APM & services
+**APM services** — [Service list]({w}/app/observability-traces#/services)
+View latency, error rate, and throughput (RED metrics) for every instrumented service.
+
+**Service map** — [View service map]({w}/app/observability-traces#/service-map)
+Visualize service-to-service dependencies and traffic flow across your system.
+
+### Agent observability
+**Agent traces** — [Explore agent traces]({w}/app/explore/agent-traces)
+Inspect individual AI agent invocations, tool calls, and LLM interactions.
+
+**Agent dashboard** — [Agent observability dashboard]({w}/app/dashboards#/view/agent-observability-dashboard)
+Monitor agent activity, token usage, and tool execution at a glance.
+"""
+
+    # Create the markdown visualization
+    vis_state = {
+        "title": "",
+        "type": "markdown",
+        "params": {
+            "fontSize": 12,
+            "openLinksInNewTab": False,
+            "markdown": markdown_text,
+        },
+        "aggs": [],
+    }
+
+    vis_payload = {
+        "attributes": {
+            "title": "",
+            "visState": json.dumps(vis_state),
+            "uiStateJSON": "{}",
+            "kibanaSavedObjectMeta": {
+                "searchSourceJSON": json.dumps({})
+            },
+        },
+    }
+
+    if workspace_id and workspace_id != "default":
+        vis_payload["workspaces"] = [workspace_id]
+        vis_url = f"{BASE_URL}/w/{workspace_id}/api/saved_objects/visualization/{markdown_vis_id}"
+    else:
+        vis_url = f"{BASE_URL}/api/saved_objects/visualization/{markdown_vis_id}"
+
+    try:
+        response = requests.post(
+            vis_url,
+            auth=(USERNAME, PASSWORD),
+            headers={"Content-Type": "application/json", "osd-xsrf": "true"},
+            json=vis_payload,
+            verify=False,
+            timeout=10,
+        )
+
+        if response.status_code not in (200, 409):
+            print(f"⚠️  Overview markdown creation failed: {response.text}")
+            return None
+        print(f"✅ Created overview markdown visualization")
+    except requests.exceptions.RequestException as e:
+        print(f"⚠️  Error creating overview markdown: {e}")
+        return None
+
+    # Create the dashboard with a single full-width markdown panel
+    panels = [
+        {
+            "version": "3.5.0",
+            "gridData": {"x": 0, "y": 0, "w": 48, "h": 35, "i": "0"},
+            "panelIndex": "0",
+            "embeddableConfig": {},
+            "panelRefName": "panel_0",
+        }
+    ]
+
+    dashboard_payload = {
+        "attributes": {
+            "title": "Observability Stack Overview",
+            "description": "Landing page with links to all observability features",
+            "panelsJSON": json.dumps(panels),
+            "optionsJSON": json.dumps({"useMargins": True, "hidePanelTitles": True}),
+            "timeRestore": False,
+            "kibanaSavedObjectMeta": {
+                "searchSourceJSON": json.dumps(
+                    {"query": {"query": "", "language": "kuery"}, "filter": []}
+                )
+            },
+        },
+        "references": [
+            {"name": "panel_0", "type": "visualization", "id": markdown_vis_id}
+        ],
+    }
+
+    if workspace_id and workspace_id != "default":
+        dashboard_payload["workspaces"] = [workspace_id]
+        dash_url = f"{BASE_URL}/w/{workspace_id}/api/saved_objects/dashboard/{dashboard_id}"
+    else:
+        dash_url = f"{BASE_URL}/api/saved_objects/dashboard/{dashboard_id}"
+
+    try:
+        response = requests.post(
+            dash_url,
+            auth=(USERNAME, PASSWORD),
+            headers={"Content-Type": "application/json", "osd-xsrf": "true"},
+            json=dashboard_payload,
+            verify=False,
+            timeout=10,
+        )
+
+        if response.status_code in (200, 409):
+            print(f"✅ Created Observability Stack overview dashboard")
+            set_default_dashboard(workspace_id, dashboard_id)
+            return dashboard_id
+        else:
+            print(f"⚠️  Overview dashboard creation failed: {response.text}")
+            return None
+    except requests.exceptions.RequestException as e:
+        print(f"⚠️  Error creating overview dashboard: {e}")
+        return None
+
+
 def main():
     """Initialize OpenSearch Dashboards with workspace and datasources"""
     wait_for_dashboards()
@@ -986,6 +1164,9 @@ def main():
     if traces_pattern_id:
         create_agent_observability_dashboard(workspace_id, traces_pattern_id)
 
+    # Create overview landing dashboard (becomes the new default)
+    create_overview_dashboard(workspace_id)
+
     # Create saved queries for common agent observability patterns
     create_default_saved_queries(workspace_id)
 
@@ -1009,7 +1190,7 @@ def main():
 
     # Generate appropriate dashboard URL
     if workspace_id and workspace_id != "default":
-        dashboard_url = f"http://localhost:5601/w/{workspace_id}/app/explore/logs"
+        dashboard_url = f"http://localhost:5601/w/{workspace_id}/app/dashboards#/view/observability-overview-dashboard"
     else:
         dashboard_url = "http://localhost:5601/app/home"
 
