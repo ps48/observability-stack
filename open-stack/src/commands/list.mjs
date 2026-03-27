@@ -1,26 +1,27 @@
-import { printTable, printInfo, colorStatus, formatDate } from '../ui.mjs';
-import { loadPipelines } from './index.mjs';
+import { printTable, printInfo, theme } from '../ui.mjs';
+import { loadStacks } from './index.mjs';
 
 export async function runList(session) {
   console.error();
 
-  const pipelines = await loadPipelines(session.region);
+  const stacks = await loadStacks(session.region);
 
-  if (pipelines.length === 0) {
-    printInfo('No OSI pipelines found in this region.');
+  if (stacks.length === 0) {
+    printInfo('No open-stack stacks found in this region.');
     console.error();
     return;
   }
 
   console.error();
-  const headers = ['Name', 'Status', 'OCUs', 'Created', 'Updated'];
-  const rows = pipelines.map((p) => [
-    p.name,
-    colorStatus(p.status),
-    `${p.minUnits}\u2013${p.maxUnits}`,
-    formatDate(p.createdAt),
-    formatDate(p.lastUpdatedAt),
-  ]);
+  const headers = ['Stack', 'Resources', 'Types'];
+  const rows = stacks.map((s) => {
+    const types = [...new Set(s.resources.map((r) => r.type))];
+    return [
+      s.name,
+      String(s.resources.length),
+      types.join(theme.muted(', ')),
+    ];
+  });
 
   printTable(headers, rows);
 }

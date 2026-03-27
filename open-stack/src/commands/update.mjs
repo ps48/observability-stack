@@ -1,6 +1,6 @@
-import { getPipeline, updatePipeline } from '../aws.mjs';
+import { getStackResources, getPipeline, updatePipeline } from '../aws.mjs';
 import { printInfo, printPanel, createSpinner, theme, ARROW, GoBack, eSelect, eInput, eConfirm } from '../ui.mjs';
-import { loadPipelines } from './index.mjs';
+import { loadStacks } from './index.mjs';
 
 /**
  * Extract known configurable values from pipeline YAML by regex.
@@ -73,27 +73,61 @@ function patchConfigYaml(yaml, updates) {
 export async function runUpdate(session) {
   console.error();
 
-  const pipelines = await loadPipelines(session.region);
+  const stacks = await loadStacks(session.region);
 
-  // Filter to updatable pipelines
-  const updatable = pipelines.filter((p) => p.status === 'ACTIVE');
-  if (updatable.length === 0) {
-    printInfo('No active pipelines available for update.');
+  if (stacks.length === 0) {
+    printInfo('No open-stack stacks found in this region.');
     console.error();
     return;
   }
 
-  // Select pipeline
-  const choices = updatable.map((p) => ({
-    name: `${p.name}  ${theme.muted(`(OCUs: ${p.minUnits}\u2013${p.maxUnits})`)}`,
-    value: p.name,
+  // Select stack
+  const stackChoices = stacks.map((s) => ({
+    name: `${s.name}  ${theme.muted(`(${s.resources.length} resources)`)}`,
+    value: s.name,
   }));
 
-  const pipelineName = await eSelect({
-    message: 'Select pipeline to update',
-    choices,
+  const stackName = await eSelect({
+    message: 'Select stack to update',
+    choices: stackChoices,
   });
-  if (pipelineName === GoBack) return GoBack;
+  if (stackName === GoBack) return GoBack;
+
+  // Find the OSI pipeline in this stack
+  const resourceSpinner = createSpinner(`Loading ${stackName} resources...`);
+  resourceSpinner.start();
+
+  let resources;
+  try {
+    resources = await getStackResources(session.region, stackName);
+    resourceSpinner.succeed(`Loaded ${stackName}`);
+  } catch (err) {
+    resourceSpinner.fail('Failed to load stack resources');
+    throw err;
+  }
+
+  const pipelineArns = resources.filter((r) => r.type === 'OSI Pipeline');
+  if (pipelineArns.length === 0) {
+    printInfo('No OSI pipeline found in this stack.');
+    console.error();
+    return;
+  }
+
+  // Extract pipeline name from ARN: arn:aws:osis:<region>:<account>:pipeline/<name>
+  let pipelineName;
+  if (pipelineArns.length === 1) {
+    pipelineName = pipelineArns[0].arn.split('/').pop();
+  } else {
+    const pipelineChoices = pipelineArns.map((r) => {
+      const name = r.arn.split('/').pop();
+      return { name, value: name };
+    });
+    pipelineName = await eSelect({
+      message: 'Select pipeline to update',
+      choices: pipelineChoices,
+    });
+    if (pipelineName === GoBack) return GoBack;
+  }
 
   // Get current details
   const detailSpinner = createSpinner(`Loading ${pipelineName}...`);

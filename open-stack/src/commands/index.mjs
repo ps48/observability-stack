@@ -2,21 +2,21 @@ import { runCreate } from './create.mjs';
 import { runList } from './list.mjs';
 import { runDescribe } from './describe.mjs';
 import { runUpdate } from './update.mjs';
-import { listPipelines } from '../aws.mjs';
+import { listStacks } from '../aws.mjs';
 import { createSpinner, theme } from '../ui.mjs';
 
 /**
- * Load pipelines with a spinner. Shared by describe, list, and update commands.
+ * Load stacks with a spinner. Shared by describe, list, and update commands.
  */
-export async function loadPipelines(region) {
-  const spinner = createSpinner('Loading pipelines...');
+export async function loadStacks(region) {
+  const spinner = createSpinner('Loading stacks...');
   spinner.start();
   try {
-    const pipelines = await listPipelines(region);
-    spinner.succeed(`${pipelines.length} pipeline${pipelines.length !== 1 ? 's' : ''} found`);
-    return pipelines;
+    const stacks = await listStacks(region);
+    spinner.succeed(`${stacks.length} stack${stacks.length !== 1 ? 's' : ''} found`);
+    return stacks;
   } catch (err) {
-    spinner.fail('Failed to list pipelines');
+    spinner.fail('Failed to list stacks');
     throw err;
   }
 }

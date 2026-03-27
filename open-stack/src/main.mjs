@@ -8,6 +8,10 @@ import {
   createApsWorkspace,
   createOsiPipeline,
   mapOsiRoleInDomain,
+  setupDashboards,
+  createDqsPrometheusRole,
+  createDirectQueryDataSource,
+  createOpenSearchApplication,
 } from './aws.mjs';
 import {
   printError,
@@ -103,6 +107,21 @@ export async function executePipeline(cfg) {
     console.error();
   }
 
+  // Create DQS Prometheus role and Direct Query data source (connects AMP to OpenSearch)
+  if (cfg.apsWorkspaceId && cfg.dqsRoleName) {
+    await createDqsPrometheusRole(cfg);
+    console.error();
+
+    await createDirectQueryDataSource(cfg);
+    console.error();
+  }
+
+  // Create OpenSearch Application and associate data sources
+  if (cfg.appName) {
+    await createOpenSearchApplication(cfg);
+    console.error();
+  }
+
   // Generate pipeline YAML
   const pipelineYaml = renderPipeline(cfg);
 
@@ -114,6 +133,10 @@ export async function executePipeline(cfg) {
 
   // Create the OSI pipeline
   await createOsiPipeline(cfg, pipelineYaml);
+  console.error();
+
+  // Set up OpenSearch Dashboards and create Observability workspace
+  await setupDashboards(cfg);
 
   // ── Final summary ───────────────────────────────────────────────────
   console.error();
@@ -123,8 +146,11 @@ export async function executePipeline(cfg) {
     '',
     `${theme.label('Pipeline:')}     ${cfg.pipelineName}`,
     `${theme.label('OpenSearch:')}   ${cfg.opensearchEndpoint}`,
+    `${theme.label('Application:')} ${cfg.appEndpoint || cfg.appId || 'n/a'}`,
+    `${theme.label('Dashboards:')}   ${cfg.dashboardsUrl}`,
     `${theme.label('IAM Role:')}     ${cfg.iamRoleArn}`,
     `${theme.label('Prometheus:')}   ${cfg.prometheusUrl}`,
+    `${theme.label('DQ Source:')}    ${cfg.dqsDataSourceArn || 'n/a'}`,
     '',
   ], { color: 'primary', padding: 2 });
 
@@ -191,6 +217,21 @@ function printSummary(cfg) {
     apsEntries.push(['Workspace alias', cfg.apsWorkspaceAlias]);
   }
 
+  // Dashboards
+  const dashEntries = [];
+  if (cfg.dashboardsAction === 'reuse') {
+    dashEntries.push(['Action', 'reuse existing']);
+    dashEntries.push(['URL', cfg.dashboardsUrl]);
+  } else {
+    dashEntries.push(['Action', 'create new Observability workspace']);
+  }
+
+  // Direct Query & Application
+  const dqEntries = [];
+  if (cfg.dqsRoleName) dqEntries.push(['DQS role', cfg.dqsRoleName]);
+  if (cfg.dqsDataSourceName) dqEntries.push(['Data source name', cfg.dqsDataSourceName]);
+  if (cfg.appName) dqEntries.push(['Application name', cfg.appName]);
+
   // Pipeline settings
   const tuneEntries = [
     ['Min OCU', String(cfg.minOcu)],
@@ -204,11 +245,17 @@ function printSummary(cfg) {
     ['', theme.accentBold('OpenSearch')],
     ...osEntries,
     ['', ''],
+    ['', theme.accentBold('OpenSearch Dashboards')],
+    ...dashEntries,
+    ['', ''],
     ['', theme.accentBold('IAM Role')],
     ...iamEntries,
     ['', ''],
     ['', theme.accentBold('Amazon Managed Prometheus')],
     ...apsEntries,
+    ['', ''],
+    ['', theme.accentBold('Direct Query & Application')],
+    ...dqEntries,
     ['', ''],
     ['', theme.accentBold('Pipeline Settings')],
     ...tuneEntries,

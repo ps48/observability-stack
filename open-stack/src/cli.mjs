@@ -47,6 +47,10 @@ export function parseCli(argv) {
     .option('--prometheus-url <url>', 'Reuse an existing APS remote-write URL')
     .option('--aps-workspace-alias <name>', 'Alias for new APS workspace');
 
+  // Dashboards
+  program
+    .option('--dashboards-url <url>', 'Reuse an existing OpenSearch Dashboards URL');
+
   // Pipeline tuning
   program
     .option('--min-ocu <n>', 'Minimum OCUs', DEFAULTS.minOcu)
@@ -86,6 +90,10 @@ function optsToConfig(opts) {
   let apsAction = '';
   if (opts.prometheusUrl) apsAction = 'reuse';
   else if (opts.apsWorkspaceAlias) apsAction = 'create';
+
+  let dashboardsAction = '';
+  if (opts.dashboardsUrl) dashboardsAction = 'reuse';
+  else dashboardsAction = 'create';
 
   // Auto-detect serverless from endpoint URL when not explicitly set
   if (opts.serverless && opts.managed) {
@@ -127,6 +135,15 @@ function optsToConfig(opts) {
     minOcu: Number(opts.minOcu),
     maxOcu: Number(opts.maxOcu),
     serviceMapWindow: opts.serviceMapWindow,
+    dashboardsAction,
+    dashboardsUrl: opts.dashboardsUrl || '',
+    dqsRoleName: '',
+    dqsRoleArn: '',
+    dqsDataSourceName: '',
+    dqsDataSourceArn: '',
+    appName: '',
+    appId: '',
+    appEndpoint: '',
     outputFile: opts.output || '',
     dryRun: opts.dryRun || false,
     accountId: '',
@@ -144,6 +161,10 @@ export function applySimpleDefaults(cfg) {
   if (!cfg.iamRoleName) cfg.iamRoleName = `${cfg.pipelineName}-osi-role`;
   if (!cfg.apsAction) cfg.apsAction = 'create';
   if (!cfg.apsWorkspaceAlias) cfg.apsWorkspaceAlias = cfg.pipelineName;
+  if (!cfg.dashboardsAction) cfg.dashboardsAction = 'create';
+  if (!cfg.dqsRoleName) cfg.dqsRoleName = `${cfg.pipelineName}-dqs-prometheus-role`;
+  if (!cfg.dqsDataSourceName) cfg.dqsDataSourceName = `${cfg.pipelineName.replace(/-/g, '_')}_prometheus`;
+  if (!cfg.appName) cfg.appName = cfg.pipelineName;
 }
 
 /**
@@ -160,6 +181,15 @@ export function fillDryRunPlaceholders(cfg) {
   }
   if (cfg.apsAction === 'create' && !cfg.prometheusUrl) {
     cfg.prometheusUrl = `https://aps-workspaces.${cfg.region}.amazonaws.com/workspaces/<workspace-id>/api/v1/remote_write`;
+  }
+  if (!cfg.dqsRoleArn && cfg.dqsRoleName) {
+    cfg.dqsRoleArn = `arn:aws:iam::${cfg.accountId || '123456789012'}:role/${cfg.dqsRoleName}`;
+  }
+  if (!cfg.dqsDataSourceArn && cfg.dqsDataSourceName) {
+    cfg.dqsDataSourceArn = `arn:aws:opensearch:${cfg.region}:${cfg.accountId || '123456789012'}:datasource/${cfg.dqsDataSourceName}`;
+  }
+  if (!cfg.appEndpoint) {
+    cfg.appEndpoint = `https://<app-id>.${cfg.region}.opensearch.amazonaws.com/_dashboards`;
   }
 }
 
@@ -180,6 +210,9 @@ export function validateConfig(cfg) {
   }
   if (cfg.apsAction === 'reuse' && !cfg.prometheusUrl) {
     errors.push('--prometheus-url required when reusing APS workspace');
+  }
+  if (cfg.dashboardsAction === 'reuse' && !cfg.dashboardsUrl) {
+    errors.push('--dashboards-url required when reusing OpenSearch Dashboards');
   }
 
   // Format checks

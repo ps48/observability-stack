@@ -1,69 +1,60 @@
-import { getPipeline } from '../aws.mjs';
-import { printInfo, printPanel, printBox, createSpinner, colorStatus, formatDate, theme, GoBack, eSelect } from '../ui.mjs';
-import { loadPipelines } from './index.mjs';
+import { getStackResources, arnToName } from '../aws.mjs';
+import { printInfo, printPanel, createSpinner, theme, GoBack, eSelect } from '../ui.mjs';
+import { loadStacks } from './index.mjs';
 
 export async function runDescribe(session) {
   console.error();
 
-  const pipelines = await loadPipelines(session.region);
+  const stacks = await loadStacks(session.region);
 
-  if (pipelines.length === 0) {
-    printInfo('No OSI pipelines found in this region.');
+  if (stacks.length === 0) {
+    printInfo('No open-stack stacks found in this region.');
     console.error();
     return;
   }
 
-  // Select a pipeline
-  const choices = pipelines.map((p) => ({
-    name: `${p.name}  ${theme.muted(`(${p.status})`)}`,
-    value: p.name,
+  // Select a stack
+  const choices = stacks.map((s) => ({
+    name: `${s.name}  ${theme.muted(`(${s.resources.length} resources)`)}`,
+    value: s.name,
   }));
 
-  const pipelineName = await eSelect({
-    message: 'Select pipeline',
+  const stackName = await eSelect({
+    message: 'Select stack',
     choices,
   });
-  if (pipelineName === GoBack) return GoBack;
+  if (stackName === GoBack) return GoBack;
 
-  // Fetch full details
-  const detailSpinner = createSpinner(`Loading ${pipelineName}...`);
+  // Fetch full resource list
+  const detailSpinner = createSpinner(`Loading ${stackName}...`);
   detailSpinner.start();
 
-  let pipeline;
+  let resources;
   try {
-    pipeline = await getPipeline(session.region, pipelineName);
-    detailSpinner.succeed(`Pipeline: ${pipelineName}`);
+    resources = await getStackResources(session.region, stackName);
+    detailSpinner.succeed(`Stack: ${stackName} (${resources.length} resources)`);
   } catch (err) {
-    detailSpinner.fail('Failed to get pipeline details');
+    detailSpinner.fail('Failed to get stack details');
     throw err;
   }
 
-  // Display details in a panel
+  // Group resources by type
+  const grouped = new Map();
+  for (const r of resources) {
+    if (!grouped.has(r.type)) grouped.set(r.type, []);
+    grouped.get(r.type).push(r);
+  }
+
+  // Display resources
   console.error();
-  const entries = [
-    ['Name', pipeline.name],
-    ['ARN', theme.muted(pipeline.arn)],
-    ['Status', colorStatus(pipeline.status)],
-  ];
-  if (pipeline.statusReason) {
-    entries.push(['Status Reason', pipeline.statusReason]);
-  }
-  entries.push(
-    ['Min OCUs', String(pipeline.minUnits)],
-    ['Max OCUs', String(pipeline.maxUnits)],
-    ['Created', formatDate(pipeline.createdAt)],
-    ['Last Updated', formatDate(pipeline.lastUpdatedAt)],
-  );
-  printPanel(pipelineName, entries);
-
-  if (pipeline.ingestEndpoints.length > 0) {
-    console.error();
-    const epLines = pipeline.ingestEndpoints.map((ep) => theme.accent(ep));
-    printBox(['', ...epLines, ''], { title: 'Ingestion Endpoints', color: 'dim', padding: 2 });
+  const entries = [];
+  for (const [type, items] of grouped) {
+    entries.push(['', theme.accentBold(type)]);
+    for (const item of items) {
+      entries.push([arnToName(item.arn), theme.muted(item.arn)]);
+    }
+    entries.push(['', '']);
   }
 
-  if (pipeline.pipelineConfigurationBody) {
-    console.error();
-    console.error(pipeline.pipelineConfigurationBody);
-  }
+  printPanel(`${stackName}`, entries);
 }

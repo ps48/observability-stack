@@ -5,6 +5,10 @@ import {
   DescribeDomainCommand,
   ListDomainNamesCommand,
   DescribeDomainsCommand,
+  AddDirectQueryDataSourceCommand,
+  CreateApplicationCommand,
+  UpdateApplicationCommand,
+  ListApplicationsCommand,
 } from '@aws-sdk/client-opensearch';
 import {
   OpenSearchServerlessClient,
@@ -34,6 +38,11 @@ import {
   UpdatePipelineCommand,
 } from '@aws-sdk/client-osis';
 import {
+  ResourceGroupsTaggingAPIClient,
+  GetResourcesCommand,
+  TagResourcesCommand,
+} from '@aws-sdk/client-resource-groups-tagging-api';
+import {
   printStep,
   printSuccess,
   printError,
@@ -42,6 +51,14 @@ import {
   createSpinner,
 } from './ui.mjs';
 import chalk from 'chalk';
+
+// ── Tagging ─────────────────────────────────────────────────────────────────
+
+const TAG_KEY = 'open-stack';
+
+function stackTags(stackName) {
+  return [{ Key: TAG_KEY, Value: stackName }];
+}
 
 // ── Prerequisites ───────────────────────────────────────────────────────────
 
@@ -149,6 +166,7 @@ async function createServerlessCollection(cfg) {
       await client.send(new CreateCollectionCommand({
         name: collectionName,
         type: 'TIMESERIES',
+        tags: stackTags(cfg.pipelineName).map((t) => ({ key: t.Key, value: t.Value })),
       }));
       printSuccess('Collection creation initiated — waiting for endpoint');
     } catch (err) {
@@ -326,6 +344,7 @@ async function createManagedDomain(cfg) {
           },
         },
         AccessPolicies: accessPolicy,
+        TagList: stackTags(cfg.pipelineName),
       }));
       printSuccess('Domain creation initiated — waiting for endpoint');
     } catch (createErr) {
@@ -440,6 +459,7 @@ export async function createIamRole(cfg) {
     const result = await client.send(new CreateRoleCommand({
       RoleName: cfg.iamRoleName,
       AssumeRolePolicyDocument: trustPolicy,
+      Tags: stackTags(cfg.pipelineName),
     }));
     cfg.iamRoleArn = result.Role.Arn;
     printSuccess(`Role created: ${cfg.iamRoleArn}`);
@@ -522,7 +542,10 @@ export async function createApsWorkspace(cfg) {
   } catch { /* proceed to create */ }
 
   try {
-    const result = await client.send(new CreateWorkspaceCommand({ alias: cfg.apsWorkspaceAlias }));
+    const result = await client.send(new CreateWorkspaceCommand({
+      alias: cfg.apsWorkspaceAlias,
+      tags: { [TAG_KEY]: cfg.pipelineName },
+    }));
     cfg.apsWorkspaceId = result.workspaceId;
     cfg.prometheusUrl = `https://aps-workspaces.${cfg.region}.amazonaws.com/workspaces/${cfg.apsWorkspaceId}/api/v1/remote_write`;
 
@@ -576,6 +599,7 @@ export async function createOsiPipeline(cfg, pipelineYaml) {
       MinUnits: cfg.minOcu,
       MaxUnits: cfg.maxOcu,
       PipelineConfigurationBody: pipelineYaml,
+      Tags: stackTags(cfg.pipelineName),
     }));
     printSuccess(`Pipeline '${cfg.pipelineName}' creation initiated`);
   } catch (err) {
@@ -622,6 +646,336 @@ export async function createOsiPipeline(cfg, pipelineYaml) {
 
   spinner.warn('Timed out waiting — pipeline may still be provisioning');
   printInfo(`Check: aws osis get-pipeline --pipeline-name ${cfg.pipelineName} --region ${cfg.region}`);
+}
+
+// ── OpenSearch Dashboards workspace ──────────────────────────────────────────
+
+/**
+ * Set up OpenSearch Dashboards: derive the URL and create an Observability workspace.
+ * Skipped when dashboardsAction is 'reuse' (user provided their own URL).
+ * For managed domains, uses basic auth to call the Dashboards API.
+ * For serverless, provides the URL only (workspace setup via AWS console).
+ */
+export async function setupDashboards(cfg) {
+  if (!cfg.opensearchEndpoint) return;
+  if (cfg.dashboardsAction === 'reuse') {
+    printStep('OpenSearch Dashboards');
+    printSuccess(`Using existing Dashboards: ${cfg.dashboardsUrl}`);
+    return;
+  }
+
+  printStep('Setting up OpenSearch Dashboards...');
+
+  // Derive Dashboards URL from OpenSearch endpoint
+  cfg.dashboardsUrl = `${cfg.opensearchEndpoint}/_dashboards`;
+  printSuccess(`Dashboards URL: ${cfg.dashboardsUrl}`);
+
+  // Create observability workspace (managed domains only — uses basic auth)
+  if (!cfg.serverless) {
+    await createObservabilityWorkspace(cfg);
+  } else {
+    printInfo('Create an Observability workspace in OpenSearch Dashboards to view traces, logs, and metrics');
+  }
+}
+
+async function createObservabilityWorkspace(cfg) {
+  const url = `${cfg.dashboardsUrl}/api/workspaces`;
+  const auth = Buffer.from(`${MANAGED_MASTER_USER}:${MANAGED_MASTER_PASS}`).toString('base64');
+
+  // Check if an observability workspace already exists
+  try {
+    const listResp = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'osd-xsrf': 'true',
+        'Authorization': `Basic ${auth}`,
+      },
+    });
+
+    if (listResp.ok) {
+      const data = await listResp.json();
+      const existing = (data.result?.workspaces || []).find(
+        (w) => w.name === 'Observability'
+      );
+      if (existing) {
+        printSuccess(`Observability workspace already exists (id: ${existing.id})`);
+        cfg.dashboardsUrl = `${cfg.opensearchEndpoint}/_dashboards/w/${existing.id}/app/observability-overview#/`;
+        return;
+      }
+    }
+  } catch { /* proceed to create */ }
+
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'osd-xsrf': 'true',
+        'Authorization': `Basic ${auth}`,
+      },
+      body: JSON.stringify({
+        attributes: {
+          name: 'Observability',
+          description: 'Observability workspace for traces, logs, and metrics',
+          features: ['use-case-observability'],
+        },
+      }),
+    });
+
+    if (resp.ok) {
+      const data = await resp.json();
+      const workspaceId = data.result?.id;
+      if (workspaceId) {
+        cfg.dashboardsUrl = `${cfg.opensearchEndpoint}/_dashboards/w/${workspaceId}/app/observability-overview#/`;
+        printSuccess(`Observability workspace created (id: ${workspaceId})`);
+      } else {
+        printSuccess('Observability workspace created');
+      }
+    } else {
+      const body = await resp.text();
+      printWarning(`Could not create Observability workspace (${resp.status}): ${body}`);
+      printInfo('You can create one manually in OpenSearch Dashboards → Workspaces');
+    }
+  } catch (err) {
+    printWarning(`Could not create Observability workspace: ${err.message}`);
+    printInfo('You can create one manually in OpenSearch Dashboards → Workspaces');
+  }
+}
+
+// ── Direct Query Data Source (AMP → OpenSearch) ─────────────────────────────
+
+/**
+ * Create an IAM role for the Direct Query Service to access AMP.
+ * Trust policy allows directquery.opensearchservice.amazonaws.com to assume it.
+ */
+export async function createDqsPrometheusRole(cfg) {
+  const roleName = cfg.dqsRoleName;
+  printStep(`Creating DQS Prometheus role '${roleName}'...`);
+
+  const client = new IAMClient({ region: cfg.region });
+
+  // Check if role already exists
+  try {
+    const existing = await client.send(new GetRoleCommand({ RoleName: roleName }));
+    cfg.dqsRoleArn = existing.Role.Arn;
+    printSuccess(`DQS role already exists: ${cfg.dqsRoleArn}`);
+    return;
+  } catch (err) {
+    if (err.name !== 'NoSuchEntityException') throw err;
+  }
+
+  const trustPolicy = JSON.stringify({
+    Version: '2012-10-17',
+    Statement: [{
+      Effect: 'Allow',
+      Principal: { Service: 'directquery.opensearchservice.amazonaws.com' },
+      Action: 'sts:AssumeRole',
+    }],
+  });
+
+  try {
+    const result = await client.send(new CreateRoleCommand({
+      RoleName: roleName,
+      AssumeRolePolicyDocument: trustPolicy,
+      Tags: stackTags(cfg.pipelineName),
+    }));
+    cfg.dqsRoleArn = result.Role.Arn;
+    printSuccess(`DQS role created: ${cfg.dqsRoleArn}`);
+  } catch (err) {
+    printError('Failed to create DQS Prometheus role');
+    console.error(`  ${chalk.dim(err.message)}`);
+    console.error();
+    throw new Error('Failed to create DQS Prometheus role');
+  }
+
+  // Attach APS access policy
+  const apsWorkspaceArn = `arn:aws:aps:${cfg.region}:${cfg.accountId}:workspace/${cfg.apsWorkspaceId}`;
+  const permissionsPolicy = JSON.stringify({
+    Version: '2012-10-17',
+    Statement: [{ Effect: 'Allow', Action: 'aps:*', Resource: apsWorkspaceArn }],
+  });
+
+  try {
+    await client.send(new PutRolePolicyCommand({
+      RoleName: roleName,
+      PolicyName: 'APSAccess',
+      PolicyDocument: permissionsPolicy,
+    }));
+    printSuccess('APS access policy attached to DQS role');
+  } catch (err) {
+    printError('Failed to attach APS policy to DQS role');
+    console.error(`  ${chalk.dim(err.message)}`);
+    console.error();
+    throw new Error('Failed to attach APS policy to DQS role');
+  }
+
+  await sleep(5000);
+}
+
+/**
+ * Create a Direct Query Data Source connecting OpenSearch to AMP (Prometheus).
+ * Uses the OpenSearch service control plane API.
+ */
+export async function createDirectQueryDataSource(cfg) {
+  const dataSourceName = cfg.dqsDataSourceName;
+  printStep(`Creating Direct Query data source '${dataSourceName}'...`);
+
+  const client = new OpenSearchClient({ region: cfg.region });
+  const workspaceArn = `arn:aws:aps:${cfg.region}:${cfg.accountId}:workspace/${cfg.apsWorkspaceId}`;
+
+  try {
+    const result = await client.send(new AddDirectQueryDataSourceCommand({
+      DataSourceName: dataSourceName,
+      DataSourceType: {
+        Prometheus: {
+          RoleArn: cfg.dqsRoleArn,
+          WorkspaceArn: workspaceArn,
+        },
+      },
+      Description: `Prometheus data source for ${cfg.pipelineName} observability stack`,
+    }));
+    cfg.dqsDataSourceArn = result.DataSourceArn;
+    printSuccess(`Direct Query data source created: ${cfg.dqsDataSourceArn}`);
+    await tagResource(cfg.region, cfg.dqsDataSourceArn, cfg.pipelineName);
+  } catch (err) {
+    // Treat "already exists" as success
+    if (/already exists/i.test(err.message) || err.name === 'ResourceAlreadyExistsException') {
+      cfg.dqsDataSourceArn = `arn:aws:opensearch:${cfg.region}:${cfg.accountId}:datasource/${dataSourceName}`;
+      printSuccess(`Data source '${dataSourceName}' already exists`);
+      return;
+    }
+    printError('Failed to create Direct Query data source');
+    console.error(`  ${chalk.dim(err.message)}`);
+    console.error();
+    throw new Error('Failed to create Direct Query data source');
+  }
+}
+
+/**
+ * Create an OpenSearch Application (the new OpenSearch UI) and associate
+ * the OpenSearch domain/collection and the DQS data source with it.
+ */
+export async function createOpenSearchApplication(cfg) {
+  const appName = cfg.appName;
+  printStep(`Creating OpenSearch Application '${appName}'...`);
+
+  const client = new OpenSearchClient({ region: cfg.region });
+
+  // Check if app already exists
+  try {
+    const list = await client.send(new ListApplicationsCommand({}));
+    const existing = (list.ApplicationSummaries || []).find((a) => a.name === appName);
+    if (existing) {
+      cfg.appId = existing.id;
+      cfg.appEndpoint = existing.endpoint;
+      printSuccess(`Application '${appName}' already exists (id: ${cfg.appId})`);
+      // Update data sources on existing app
+      await associateDataSourcesWithApp(cfg, client);
+      return;
+    }
+  } catch { /* proceed to create */ }
+
+  // Build data sources list
+  const dataSources = [];
+  if (cfg.serverless) {
+    // Serverless collection ARN: arn:aws:aoss:{region}:{accountId}:collection/{id}
+    // We need the collection ARN — derive from endpoint
+    const collectionId = extractServerlessCollectionId(cfg.opensearchEndpoint);
+    if (collectionId) {
+      dataSources.push({
+        dataSourceArn: `arn:aws:aoss:${cfg.region}:${cfg.accountId}:collection/${collectionId}`,
+      });
+    }
+  } else if (cfg.osDomainName) {
+    dataSources.push({
+      dataSourceArn: `arn:aws:es:${cfg.region}:${cfg.accountId}:domain/${cfg.osDomainName}`,
+    });
+  }
+  if (cfg.dqsDataSourceArn) {
+    dataSources.push({ dataSourceArn: cfg.dqsDataSourceArn });
+  }
+
+  try {
+    const result = await client.send(new CreateApplicationCommand({
+      name: appName,
+      dataSources,
+      iamIdentityCenterOptions: {
+        enabled: false,
+      },
+    }));
+    cfg.appId = result.id;
+    cfg.appEndpoint = result.endpoint;
+    printSuccess(`Application created: ${cfg.appId}`);
+    if (cfg.appEndpoint) {
+      printInfo(`Application endpoint: ${cfg.appEndpoint}`);
+    }
+    if (result.arn) {
+      await tagResource(cfg.region, result.arn, cfg.pipelineName);
+    }
+  } catch (err) {
+    if (/already exists/i.test(err.message) || err.name === 'ResourceAlreadyExistsException' || err.name === 'ConflictException') {
+      printSuccess(`Application '${appName}' already exists`);
+      // Try to find and update it
+      try {
+        const list = await client.send(new ListApplicationsCommand({}));
+        const existing = (list.ApplicationSummaries || []).find((a) => a.name === appName);
+        if (existing) {
+          cfg.appId = existing.id;
+          cfg.appEndpoint = existing.endpoint;
+          await associateDataSourcesWithApp(cfg, client);
+        }
+      } catch { /* best effort */ }
+      return;
+    }
+    printWarning(`Could not create OpenSearch Application: ${err.message}`);
+    printInfo('You can create one manually in the AWS console');
+  }
+}
+
+/**
+ * Associate the OpenSearch domain and DQS data source with the application.
+ */
+async function associateDataSourcesWithApp(cfg, client) {
+  if (!cfg.appId) return;
+
+  const dataSources = [];
+  if (cfg.serverless) {
+    const collectionId = extractServerlessCollectionId(cfg.opensearchEndpoint);
+    if (collectionId) {
+      dataSources.push({
+        dataSourceArn: `arn:aws:aoss:${cfg.region}:${cfg.accountId}:collection/${collectionId}`,
+      });
+    }
+  } else if (cfg.osDomainName) {
+    dataSources.push({
+      dataSourceArn: `arn:aws:es:${cfg.region}:${cfg.accountId}:domain/${cfg.osDomainName}`,
+    });
+  }
+  if (cfg.dqsDataSourceArn) {
+    dataSources.push({ dataSourceArn: cfg.dqsDataSourceArn });
+  }
+
+  if (dataSources.length === 0) return;
+
+  try {
+    const result = await client.send(new UpdateApplicationCommand({
+      id: cfg.appId,
+      dataSources,
+    }));
+    cfg.appEndpoint = result.endpoint || cfg.appEndpoint;
+    printSuccess('Data sources associated with application');
+  } catch (err) {
+    printWarning(`Could not associate data sources: ${err.message}`);
+  }
+}
+
+/**
+ * Extract serverless collection ID from endpoint URL.
+ * Endpoint format: https://<id>.<region>.aoss.amazonaws.com
+ */
+function extractServerlessCollectionId(endpoint) {
+  const match = endpoint?.match(/https?:\/\/([^.]+)\./);
+  return match?.[1] || '';
 }
 
 // ── Resource listing (for interactive reuse selection) ──────────────────────
@@ -801,6 +1155,113 @@ export async function updatePipeline(region, pipelineName, params) {
   }
 
   spinner.warn('Timed out waiting for update — pipeline may still be updating');
+}
+
+// ── Stack discovery (tag-based) ──────────────────────────────────────────────
+
+/**
+ * Tag a resource after creation using the Resource Groups Tagging API.
+ * Best-effort — failures are silently ignored.
+ */
+async function tagResource(region, arn, stackName) {
+  try {
+    const client = new ResourceGroupsTaggingAPIClient({ region });
+    await client.send(new TagResourcesCommand({
+      ResourceARNList: [arn],
+      Tags: { [TAG_KEY]: stackName },
+    }));
+  } catch { /* best effort */ }
+}
+
+/**
+ * List all open-stack stacks in a region by querying the Resource Groups Tagging API.
+ * Returns [{ name, resources: [{ arn, type }] }] grouped by stack name.
+ */
+export async function listStacks(region) {
+  const client = new ResourceGroupsTaggingAPIClient({ region });
+  const stacks = new Map();
+
+  let paginationToken;
+  do {
+    const resp = await client.send(new GetResourcesCommand({
+      TagFilters: [{ Key: TAG_KEY }],
+      PaginationToken: paginationToken || undefined,
+    }));
+
+    for (const r of resp.ResourceTagMappingList || []) {
+      const tag = (r.Tags || []).find((t) => t.Key === TAG_KEY);
+      if (!tag) continue;
+      const stackName = tag.Value;
+      if (!stacks.has(stackName)) {
+        stacks.set(stackName, []);
+      }
+      stacks.get(stackName).push({
+        arn: r.ResourceARN,
+        type: arnToType(r.ResourceARN),
+      });
+    }
+
+    paginationToken = resp.PaginationToken;
+  } while (paginationToken);
+
+  return [...stacks.entries()].map(([name, resources]) => ({ name, resources }));
+}
+
+/**
+ * Get all resources for a specific stack by its tag value.
+ * Returns [{ arn, type }].
+ */
+export async function getStackResources(region, stackName) {
+  const client = new ResourceGroupsTaggingAPIClient({ region });
+  const resources = [];
+
+  let paginationToken;
+  do {
+    const resp = await client.send(new GetResourcesCommand({
+      TagFilters: [{ Key: TAG_KEY, Values: [stackName] }],
+      PaginationToken: paginationToken || undefined,
+    }));
+
+    for (const r of resp.ResourceTagMappingList || []) {
+      resources.push({
+        arn: r.ResourceARN,
+        type: arnToType(r.ResourceARN),
+      });
+    }
+
+    paginationToken = resp.PaginationToken;
+  } while (paginationToken);
+
+  return resources;
+}
+
+/**
+ * Map an ARN to a human-readable resource type.
+ */
+function arnToType(arn) {
+  if (/^arn:aws:osis:/.test(arn)) return 'OSI Pipeline';
+  if (/^arn:aws:aoss:.*:collection\//.test(arn)) return 'OpenSearch Serverless';
+  if (/^arn:aws:es:.*:domain\//.test(arn)) return 'OpenSearch Domain';
+  if (/^arn:aws:iam:.*:role\//.test(arn)) return 'IAM Role';
+  if (/^arn:aws:aps:.*:workspace\//.test(arn)) return 'APS Workspace';
+  if (/^arn:aws:opensearch:.*:datasource\//.test(arn)) return 'DQ Data Source';
+  if (/^arn:aws:opensearch:.*:application\//.test(arn)) return 'OpenSearch Application';
+  return 'Resource';
+}
+
+/**
+ * Extract the resource name from an ARN.
+ */
+export function arnToName(arn) {
+  // IAM roles: arn:aws:iam::123:role/role-name
+  const iamMatch = arn.match(/:role\/(.+)$/);
+  if (iamMatch) return iamMatch[1];
+  // Most others: .../{name} or ...:<name>
+  const lastSlash = arn.lastIndexOf('/');
+  if (lastSlash !== -1) return arn.slice(lastSlash + 1);
+  const lastColon = arn.lastIndexOf(':');
+  if (lastColon !== -1) return arn.slice(lastColon + 1);
+  return arn;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

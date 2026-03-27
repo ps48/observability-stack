@@ -77,10 +77,15 @@ async function stepCore(cfg, session) {
     cfg.iamRoleName = `${cfg.pipelineName}-osi-role`;
     cfg.apsAction = 'create';
     cfg.apsWorkspaceAlias = cfg.pipelineName;
+    cfg.dashboardsAction = 'create';
+    cfg.dqsRoleName = `${cfg.pipelineName}-dqs-prometheus-role`;
+    cfg.dqsDataSourceName = `${cfg.pipelineName.replace(/-/g, '_')}_prometheus`;
+    cfg.appName = cfg.pipelineName;
     console.error();
     printSubStep(
       `Will create: OpenSearch Serverless collection '${theme.accent(cfg.osDomainName)}', ` +
-      `IAM role '${theme.accent(cfg.iamRoleName)}', APS workspace '${theme.accent(cfg.apsWorkspaceAlias)}'`
+      `IAM role '${theme.accent(cfg.iamRoleName)}', APS workspace '${theme.accent(cfg.apsWorkspaceAlias)}', ` +
+      `OpenSearch Application '${theme.accent(cfg.appName)}' with Prometheus data source`
     );
   }
 }
@@ -271,6 +276,34 @@ async function stepAps(cfg) {
   }
 }
 
+async function stepDashboards(cfg) {
+  if (cfg.mode !== 'advanced') return 'skip';
+
+  printStep('OpenSearch Dashboards');
+  console.error();
+
+  const choice = await eSelect({
+    message: 'Create new or reuse existing?',
+    choices: [
+      { name: `Create new ${theme.muted('\u2014 set up Observability workspace automatically')}`, value: 'create' },
+      { name: 'Reuse existing', value: 'reuse' },
+    ],
+    default: cfg.dashboardsAction || 'create',
+  });
+  if (choice === GoBack) return GoBack;
+
+  if (choice === 'reuse') {
+    cfg.dashboardsAction = 'reuse';
+
+    const url = await promptUrl('OpenSearch Dashboards URL');
+    if (url === GoBack) return GoBack;
+    cfg.dashboardsUrl = url;
+  } else {
+    cfg.dashboardsAction = 'create';
+    printSubStep('Will create Observability workspace in OpenSearch Dashboards');
+  }
+}
+
 async function stepTuning(cfg) {
   if (cfg.mode !== 'advanced') return 'skip';
 
@@ -321,7 +354,7 @@ export async function runCreateWizard(session = null) {
 
   if (!session) printHeader();
 
-  const steps = [stepMode, stepCore, stepOpenSearch, stepIam, stepAps, stepTuning, stepOutput];
+  const steps = [stepMode, stepCore, stepOpenSearch, stepIam, stepAps, stepDashboards, stepTuning, stepOutput];
   const visited = [];
   let i = 0;
 
