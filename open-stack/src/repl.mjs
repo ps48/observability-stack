@@ -1,8 +1,8 @@
-import { select, input } from '@inquirer/prompts';
+import { input } from '@inquirer/prompts';
 import { STSClient, GetCallerIdentityCommand } from '@aws-sdk/client-sts';
 import {
-  printBanner, printError, printInfo,
-  printKeyHint, printPanel, theme,
+  printBanner, printDivider, printError, printInfo,
+  printPanel, theme, GoBack, eSelect,
 } from './ui.mjs';
 import { COMMANDS, COMMAND_CHOICES } from './commands/index.mjs';
 
@@ -10,13 +10,13 @@ import { COMMANDS, COMMAND_CHOICES } from './commands/index.mjs';
  * Initialize session — prompt for region and verify AWS credentials.
  */
 async function initSession() {
-  const region = await input({
+  const envRegion = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION;
+  const region = envRegion || await input({
     message: 'AWS region',
     default: 'us-east-1',
     validate: (v) => /^[a-z]{2}-[a-z]+-\d+$/.test(v) || 'Expected format: us-east-1',
   });
 
-  console.error();
   const sts = new STSClient({ region });
   let identity;
   try {
@@ -25,6 +25,7 @@ async function initSession() {
     printError('AWS credentials are not configured or have expired');
     printInfo(err.message);
     printInfo('Run "aws configure" or "aws sso login" to set up credentials, then restart.');
+    printInfo('Docs: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-quickstart.html#getting-started-quickstart-new-command');
     throw err;
   }
 
@@ -51,38 +52,20 @@ export async function startRepl() {
   }
 
   console.error();
-  printKeyHint([['Enter', 'select'], ['Esc', 'back'], ['Ctrl+C', 'exit']]);
-  console.error();
 
   while (true) {
-    let cmd;
-    try {
-      cmd = await select({
-        message: theme.primary(`osi-pipeline [${session.region}]`),
-        choices: COMMAND_CHOICES,
-      });
-    } catch (err) {
-      // Ctrl+C at the menu level → exit
-      if (err.name === 'ExitPromptError') break;
-      throw err;
-    }
+    const cmd = await eSelect({
+      message: theme.primary(`open-stack [${session.region}]`),
+      choices: COMMAND_CHOICES,
+      clearPromptOnDone: true,
+    });
 
-    if (cmd === 'quit') break;
+    if (cmd === GoBack || cmd === 'quit') break;
 
-    try {
-      await COMMANDS[cmd](session);
-    } catch (err) {
-      if (err.name === 'ExitPromptError') {
-        // Ctrl+C during a command → return to menu
-        console.error();
-        printInfo('Cancelled.');
-        console.error();
-        continue;
-      }
-      console.error();
-      printError(err.message);
-      console.error();
-    }
+    const result = await COMMANDS[cmd](session);
+    printDivider();
+    console.error();
+    if (result === GoBack) continue;
   }
 
   console.error();

@@ -4,16 +4,16 @@ export async function runHelp() {
   console.error();
   const lines = [
     '',
-    `${theme.accentBold('create')}      Create a new OSI pipeline (interactive wizard)`,
-    `${theme.accentBold('list')}        List existing OSI pipelines`,
-    `${theme.accentBold('describe')}    Show details of a specific pipeline`,
-    `${theme.accentBold('update')}      Update an existing pipeline's settings`,
+    `${theme.accentBold('create')}      Create a new observability stack`,
+    `${theme.accentBold('list')}        List existing stacks`,
+    `${theme.accentBold('describe')}    Show details of a stack`,
+    `${theme.accentBold('update')}      Update a stack's settings`,
     `${theme.accentBold('help')}        Show this help message`,
-    `${theme.accentBold('quit')}        Exit the pipeline manager`,
+    `${theme.accentBold('quit')}        Exit Open Stack`,
     '',
   ];
   printBox(lines, { title: 'Commands', color: 'dim', padding: 2 });
   console.error();
-  printKeyHint([['Ctrl+C', 'cancel any operation and return to menu']]);
+  printKeyHint([['Ctrl+C', 'exit']]);
   console.error();
 }

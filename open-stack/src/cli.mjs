@@ -9,8 +9,8 @@ export function parseCli(argv) {
   const program = new Command()
     .name('open-stack')
     .description(
-      'Create AWS resources and an OpenSearch Ingestion (OSI) pipeline\n' +
-      'for the full Observability Stack: logs, traces, metrics, service map.'
+      'Create and manage your observability stack on AWS:\n' +
+      'OpenSearch, Prometheus, IAM roles, and ingestion pipelines.'
     )
     .version('1.0.0');
 

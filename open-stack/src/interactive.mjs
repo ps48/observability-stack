@@ -1,16 +1,11 @@
-import { select, input, confirm } from '@inquirer/prompts';
 import {
-  printHeader, printStep, printInfo, printSubStep, printKeyHint,
-  createSpinner, theme, GoBack, withEscape,
+  printHeader, printStep, printInfo, printSubStep,
+  createSpinner, theme, GoBack, eSelect, eInput,
 } from './ui.mjs';
 import { createDefaultConfig, DEFAULTS } from './config.mjs';
-import { listDomains, listRoles, listWorkspaces } from './aws.mjs';
+import { listDomains, listWorkspaces } from './aws.mjs';
 
 const CUSTOM_INPUT = Symbol('custom');
-
-const eSelect = withEscape(select);
-const eInput = withEscape(input);
-const eConfirm = withEscape(confirm);
 
 /**
  * Fetch resources with a spinner, returning [] on failure.
@@ -37,7 +32,7 @@ async function stepMode(cfg) {
   const mode = await eSelect({
     message: 'Mode',
     choices: [
-      { name: `Simple   ${theme.muted('\u2014 just name + region; creates all resources with defaults')}`, value: 'simple' },
+      { name: `Simple   ${theme.muted('\u2014 creates all resources with defaults')}`, value: 'simple' },
       { name: `Advanced ${theme.muted('\u2014 create new or reuse existing resources; tune pipeline settings')}`, value: 'advanced' },
     ],
     default: cfg.mode || 'simple',
@@ -180,7 +175,7 @@ async function stepOpenSearch(cfg) {
 async function stepIam(cfg) {
   if (cfg.mode !== 'advanced') return 'skip';
 
-  printStep('IAM role for OSI pipeline');
+  printStep('IAM role');
   console.error();
 
   const iamChoice = await eSelect({
@@ -195,41 +190,9 @@ async function stepIam(cfg) {
 
   if (iamChoice === 'reuse') {
     cfg.iamAction = 'reuse';
-
-    const roles = await fetchWithSpinner(
-      'Loading IAM roles',
-      () => listRoles(cfg.region),
-    );
-
-    if (roles.length > 0) {
-      const osiRoles = [];
-      const otherRoles = [];
-      for (const r of roles) {
-        (/osi|pipeline|ingestion/i.test(r.name) ? osiRoles : otherRoles).push(r);
-      }
-      const sorted = [...osiRoles, ...otherRoles];
-
-      const choices = sorted.map((r) => ({
-        name: `${r.name} ${theme.muted(`\u2014 ${r.arn}`)}`,
-        value: r.arn,
-      }));
-      choices.push({ name: theme.accent('Enter ARN manually...'), value: CUSTOM_INPUT });
-
-      const selected = await eSelect({ message: 'Select role', choices });
-      if (selected === GoBack) return GoBack;
-      if (selected === CUSTOM_INPUT) {
-        const arn = await promptArn();
-        if (arn === GoBack) return GoBack;
-        cfg.iamRoleArn = arn;
-      } else {
-        cfg.iamRoleArn = selected;
-      }
-    } else {
-      printInfo('No roles found \u2014 enter ARN manually');
-      const arn = await promptArn();
-      if (arn === GoBack) return GoBack;
-      cfg.iamRoleArn = arn;
-    }
+    const arn = await promptArn();
+    if (arn === GoBack) return GoBack;
+    cfg.iamRoleArn = arn;
   } else {
     cfg.iamAction = 'create';
     const roleName = await eInput({ message: 'Role name', default: cfg.iamRoleName || `${cfg.pipelineName}-osi-role` });
@@ -322,19 +285,14 @@ async function stepTuning(cfg) {
 }
 
 async function stepOutput(cfg) {
+  if (cfg.mode !== 'advanced') return 'skip';
+
   printStep('Output');
   console.error();
 
   const outputFile = await eInput({ message: 'Output file for pipeline YAML (leave empty for stdout)', default: cfg.outputFile || '' });
   if (outputFile === GoBack) return GoBack;
   cfg.outputFile = outputFile;
-
-  const dryRun = await eConfirm({
-    message: 'Dry run only (generate config, skip resource creation)?',
-    default: cfg.dryRun ?? true,
-  });
-  if (dryRun === GoBack) return GoBack;
-  cfg.dryRun = dryRun;
 }
 
 // ── Main wizard ──────────────────────────────────────────────────────────────
@@ -348,8 +306,6 @@ export async function runCreateWizard(session = null) {
   const cfg = createDefaultConfig();
 
   if (!session) printHeader();
-  printKeyHint([['Esc', 'back'], ['Ctrl+C', 'cancel']]);
-  console.error();
 
   const steps = [stepMode, stepCore, stepOpenSearch, stepIam, stepAps, stepTuning, stepOutput];
   const visited = [];
@@ -360,8 +316,8 @@ export async function runCreateWizard(session = null) {
 
     if (result === GoBack) {
       if (visited.length === 0) {
-        // Escape at first step → cancel wizard (same as Ctrl+C)
-        throw Object.assign(new Error('Cancelled'), { name: 'ExitPromptError' });
+        // Escape at first step → return to menu
+        return GoBack;
       }
       i = visited.pop();
     } else if (result === 'skip') {
@@ -372,7 +328,6 @@ export async function runCreateWizard(session = null) {
     }
   }
 
-  console.error();
   return cfg;
 }
 

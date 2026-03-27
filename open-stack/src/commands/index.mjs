@@ -2,7 +2,6 @@ import { runCreate } from './create.mjs';
 import { runList } from './list.mjs';
 import { runDescribe } from './describe.mjs';
 import { runUpdate } from './update.mjs';
-import { runHelp } from './help.mjs';
 import { listPipelines } from '../aws.mjs';
 import { createSpinner, theme } from '../ui.mjs';
 
@@ -27,14 +26,12 @@ export const COMMANDS = {
   list: runList,
   describe: runDescribe,
   update: runUpdate,
-  help: runHelp,
 };
 
 export const COMMAND_CHOICES = [
-  { name: `\u2728 Create    ${theme.muted('Create a new OSI pipeline')}`, value: 'create' },
-  { name: `\u2630  List      ${theme.muted('List existing pipelines')}`, value: 'list' },
-  { name: `\uD83D\uDD0D Describe  ${theme.muted('Show details of a pipeline')}`, value: 'describe' },
-  { name: `\u270E  Update    ${theme.muted('Update a pipeline')}`, value: 'update' },
-  { name: `\u2753 Help      ${theme.muted('Show available commands')}`, value: 'help' },
+  { name: `\u2728 Create    ${theme.muted('Create a new observability stack')}`, value: 'create' },
+  { name: `\u2630 List      ${theme.muted('List existing stacks')}`, value: 'list' },
+  { name: `\uD83D\uDD0D Describe  ${theme.muted('Show details of a stack')}`, value: 'describe' },
+  { name: `\u270E  Update    ${theme.muted('Update a stack')}`, value: 'update' },
   { name: `\uD83D\uDEAA Quit      ${theme.muted('Exit')}`, value: 'quit' },
 ];

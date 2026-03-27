@@ -119,7 +119,7 @@ export async function executePipeline(cfg) {
   console.error();
   printBox([
     '',
-    `${theme.success.bold(`${STAR} OSI Pipeline Setup Complete! ${STAR}`)}`,
+    `${theme.success.bold(`${STAR} Open Stack Setup Complete! ${STAR}`)}`,
     '',
     `${theme.label('Pipeline:')}     ${cfg.pipelineName}`,
     `${theme.label('OpenSearch:')}   ${cfg.opensearchEndpoint}`,

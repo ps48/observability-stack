@@ -71,6 +71,8 @@ export async function checkRequirements(cfg) {
       console.error(`     ${chalk.bold('export AWS_ACCESS_KEY_ID=<key>')}`);
       console.error(`     ${chalk.bold('export AWS_SECRET_ACCESS_KEY=<secret>')}`);
       console.error(`     ${chalk.bold('export AWS_SESSION_TOKEN=<token>')}  ${chalk.dim('(if using temporary creds)')}`);
+      console.error();
+      console.error(`  ${chalk.dim('Docs:')} ${chalk.underline('https://docs.aws.amazon.com/cli/latest/userguide/getting-started-quickstart.html#getting-started-quickstart-new-command')}`);
     } else if (/expired|ExpiredToken/i.test(err.message)) {
       console.error(`  ${chalk.bold('Your session has expired. Refresh credentials:')}`);
       console.error();
@@ -84,6 +86,8 @@ export async function checkRequirements(cfg) {
       console.error(`  ${chalk.bold('Try:')}`);
       console.error(`     ${chalk.bold('aws configure')}        ${chalk.dim('— set up credentials')}`);
       console.error(`     ${chalk.bold('aws sso login')}        ${chalk.dim('— refresh SSO session')}`);
+      console.error();
+      console.error(`  ${chalk.dim('Docs:')} ${chalk.underline('https://docs.aws.amazon.com/cli/latest/userguide/getting-started-quickstart.html#getting-started-quickstart-new-command')}`);
     }
     console.error();
     throw new Error('AWS credentials are not configured or have expired');

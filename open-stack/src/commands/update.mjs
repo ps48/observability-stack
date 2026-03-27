@@ -1,6 +1,5 @@
-import { select, input, confirm } from '@inquirer/prompts';
 import { getPipeline, updatePipeline } from '../aws.mjs';
-import { printInfo, printPanel, createSpinner, theme, ARROW } from '../ui.mjs';
+import { printInfo, printPanel, createSpinner, theme, ARROW, GoBack, eSelect, eInput, eConfirm } from '../ui.mjs';
 import { loadPipelines } from './index.mjs';
 
 /**
@@ -90,10 +89,11 @@ export async function runUpdate(session) {
     value: p.name,
   }));
 
-  const pipelineName = await select({
+  const pipelineName = await eSelect({
     message: 'Select pipeline to update',
     choices,
   });
+  if (pipelineName === GoBack) return GoBack;
 
   // Get current details
   const detailSpinner = createSpinner(`Loading ${pipelineName}...`);
@@ -143,28 +143,33 @@ export async function runUpdate(session) {
 
   // ── Prompt for new values ──────────────────────────────────────────────
 
-  const newMinOcu = Number(await input({
+  const newMinOcuStr = await eInput({
     message: 'Minimum OCUs',
     default: String(pipeline.minUnits),
     validate: (v) => /^\d+$/.test(v.trim()) && Number(v) >= 1 || 'Must be a positive integer',
-  }));
+  });
+  if (newMinOcuStr === GoBack) return GoBack;
+  const newMinOcu = Number(newMinOcuStr);
 
-  const newMaxOcu = Number(await input({
+  const newMaxOcuStr = await eInput({
     message: 'Maximum OCUs',
     default: String(pipeline.maxUnits),
     validate: (v) => /^\d+$/.test(v.trim()) && Number(v) >= newMinOcu || `Must be >= min OCUs (${newMinOcu})`,
-  }));
+  });
+  if (newMaxOcuStr === GoBack) return GoBack;
+  const newMaxOcu = Number(newMaxOcuStr);
 
   // Pipeline config values
   const yamlUpdates = {};
   let configChanged = false;
 
   if (current.opensearchEndpoint) {
-    const newEndpoint = await input({
+    const newEndpoint = await eInput({
       message: 'OpenSearch endpoint',
       default: current.opensearchEndpoint,
       validate: (v) => /^https?:\/\//.test(v.trim()) || 'Must start with http:// or https://',
     });
+    if (newEndpoint === GoBack) return GoBack;
     if (newEndpoint !== current.opensearchEndpoint) {
       yamlUpdates.opensearchEndpoint = newEndpoint;
       configChanged = true;
@@ -172,11 +177,12 @@ export async function runUpdate(session) {
   }
 
   if (current.iamRoleArn) {
-    const newRole = await input({
+    const newRole = await eInput({
       message: 'IAM role ARN (sts_role_arn)',
       default: current.iamRoleArn,
       validate: (v) => v.trim().startsWith('arn:aws:iam:') || 'Must start with arn:aws:iam:',
     });
+    if (newRole === GoBack) return GoBack;
     if (newRole !== current.iamRoleArn) {
       yamlUpdates.iamRoleArn = newRole;
       configChanged = true;
@@ -184,11 +190,12 @@ export async function runUpdate(session) {
   }
 
   if (current.prometheusUrl) {
-    const newProm = await input({
+    const newProm = await eInput({
       message: 'Prometheus remote-write URL',
       default: current.prometheusUrl,
       validate: (v) => /^https?:\/\//.test(v.trim()) || 'Must start with http:// or https://',
     });
+    if (newProm === GoBack) return GoBack;
     if (newProm !== current.prometheusUrl) {
       yamlUpdates.prometheusUrl = newProm;
       configChanged = true;
@@ -196,11 +203,12 @@ export async function runUpdate(session) {
   }
 
   if (current.serviceMapWindow) {
-    const newWindow = await input({
+    const newWindow = await eInput({
       message: 'Service map window duration',
       default: current.serviceMapWindow,
       validate: (v) => /^\d+[smh]$/.test(v.trim()) || 'Expected format: 10s, 5m, 1h',
     });
+    if (newWindow === GoBack) return GoBack;
     if (newWindow !== current.serviceMapWindow) {
       yamlUpdates.serviceMapWindow = newWindow;
       configChanged = true;
@@ -208,18 +216,20 @@ export async function runUpdate(session) {
   }
 
   // Log publishing options
-  const newLogGroup = await input({
+  const newLogGroup = await eInput({
     message: 'CloudWatch log group (leave empty to disable)',
     default: cwLogGroup || '',
   });
+  if (newLogGroup === GoBack) return GoBack;
 
   const logPublishingChanged = (newLogGroup || '') !== (cwLogGroup || '');
 
   // Persistent buffering
-  const newPersistentBuffer = await confirm({
+  const newPersistentBuffer = await eConfirm({
     message: 'Enable persistent buffering?',
     default: !!persistentBuffering,
   });
+  if (newPersistentBuffer === GoBack) return GoBack;
 
   const bufferChanged = newPersistentBuffer !== !!persistentBuffering;
 
@@ -265,10 +275,11 @@ export async function runUpdate(session) {
   console.error();
 
   // Confirm
-  const proceed = await confirm({
+  const proceed = await eConfirm({
     message: `Apply these changes to ${pipelineName}?`,
     default: true,
   });
+  if (proceed === GoBack) return GoBack;
 
   if (!proceed) {
     printInfo('Update cancelled.');
@@ -305,5 +316,4 @@ export async function runUpdate(session) {
   // Execute update
   console.error();
   await updatePipeline(session.region, pipelineName, params);
-  console.error();
 }

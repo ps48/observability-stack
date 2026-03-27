@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import ora from 'ora';
 import readline from 'node:readline';
+import { select, input, confirm } from '@inquirer/prompts';
 
 // ── Theme colors ─────────────────────────────────────────────────────────────
 
@@ -62,7 +63,7 @@ export function renderBox(lines, opts = {}) {
   if (opts.title) {
     const titleStr = ` ${opts.title} `;
     const titleLen = stripAnsi(titleStr).length;
-    const remaining = innerWidth - titleLen;
+    const remaining = innerWidth - titleLen - 1;
     topBorder = colorFn(BOX.tl + BOX.h) + theme.primaryBold(titleStr) + colorFn(BOX.h.repeat(Math.max(0, remaining)) + BOX.tr);
   } else {
     topBorder = colorFn(BOX.tl + BOX.h.repeat(innerWidth) + BOX.tr);
@@ -118,7 +119,7 @@ export function printHeader() {
   const banner = [
     '',
     `${theme.primaryBold('Open Stack CLI')}`,
-    `${theme.muted('Create AWS resources and OpenSearch Ingestion pipelines')}`,
+    `${theme.muted('Create and manage your observability stack on AWS')}`,
     '',
   ];
   printBox(banner, { color: 'primary', padding: 2 });
@@ -165,6 +166,33 @@ export function printKeyHint(hints) {
   console.error(`  ${parts.join('  ')}`);
 }
 
+/**
+ * Returns a keysHelpTip theme function for @inquirer/select that appends
+ * extra key hints (e.g. Esc, Ctrl+C) to the default navigation line.
+ */
+export function formatKeysHelpTip(extraHints) {
+  const extra = extraHints.map(([key, desc]) =>
+    `${theme.accent(key)} ${theme.muted(desc)}`
+  ).join(theme.muted(' \u2022 '));
+  return (keys) => {
+    const base = keys.map(([key, action]) =>
+      `${theme.accent(key)} ${theme.muted(action)}`
+    ).join(theme.muted(' \u2022 '));
+    return `${base} ${theme.muted('\u2022')} ${extra}`;
+  };
+}
+
+// ── Shared escape-wrapped prompts ────────────────────────────────────────────
+
+const _selectKeyTheme = {
+  style: { keysHelpTip: formatKeysHelpTip([['Esc', 'back']]) },
+};
+
+const _eSelect = withEscape(select, { vimKeys: true });
+export const eSelect = (opts) => _eSelect({ theme: _selectKeyTheme, ...opts });
+export const eInput = withEscape(input);
+export const eConfirm = withEscape(confirm);
+
 // ── Pipeline status colorizer ────────────────────────────────────────────────
 
 const STATUS_COLORS = {
@@ -201,7 +229,7 @@ export function printBanner() {
   const banner = [
     '',
     `${theme.primaryBold('Open Stack')}`,
-    `${theme.muted('Create, list, describe, and update OpenSearch Ingestion pipelines')}`,
+    `${theme.muted('Create and manage your observability stack on AWS')}`,
     '',
   ];
   printBox(banner, { color: 'primary', padding: 2 });
@@ -222,8 +250,11 @@ let _keypressInit = false;
 /**
  * Wrap an @inquirer/prompts function so that pressing Escape cancels
  * the prompt and returns the GoBack sentinel instead of throwing.
+ * @param {Function} promptFn
+ * @param {Object}   [opts]
+ * @param {boolean}  [opts.vimKeys] - Remap j/k to down/up arrow keys
  */
-export function withEscape(promptFn) {
+export function withEscape(promptFn, { vimKeys = false } = {}) {
   return (...args) => {
     if (!_keypressInit && process.stdin.isTTY) {
       readline.emitKeypressEvents(process.stdin);
@@ -237,6 +268,10 @@ export function withEscape(promptFn) {
       if (key?.name === 'escape') {
         escaped = true;
         promise.cancel();
+      } else if (vimKeys && key?.name === 'j') {
+        process.stdin.emit('keypress', '', { name: 'down' });
+      } else if (vimKeys && key?.name === 'k') {
+        process.stdin.emit('keypress', '', { name: 'up' });
       }
     };
 
@@ -247,6 +282,13 @@ export function withEscape(promptFn) {
       (err) => {
         process.stdin.removeListener('keypress', onKeypress);
         if (escaped) return GoBack;
+        // Ctrl+C → exit immediately
+        if (err.name === 'ExitPromptError') {
+          console.error();
+          console.error(`  ${theme.muted('Goodbye.')}`);
+          console.error();
+          process.exit(0);
+        }
         throw err;
       },
     );

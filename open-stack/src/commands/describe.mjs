@@ -1,6 +1,5 @@
-import { select } from '@inquirer/prompts';
 import { getPipeline } from '../aws.mjs';
-import { printInfo, printPanel, printBox, createSpinner, colorStatus, formatDate, theme } from '../ui.mjs';
+import { printInfo, printPanel, printBox, createSpinner, colorStatus, formatDate, theme, GoBack, eSelect } from '../ui.mjs';
 import { loadPipelines } from './index.mjs';
 
 export async function runDescribe(session) {
@@ -20,10 +19,11 @@ export async function runDescribe(session) {
     value: p.name,
   }));
 
-  const pipelineName = await select({
+  const pipelineName = await eSelect({
     message: 'Select pipeline',
     choices,
   });
+  if (pipelineName === GoBack) return GoBack;
 
   // Fetch full details
   const detailSpinner = createSpinner(`Loading ${pipelineName}...`);
@@ -64,9 +64,6 @@ export async function runDescribe(session) {
 
   if (pipeline.pipelineConfigurationBody) {
     console.error();
-    const configLines = pipeline.pipelineConfigurationBody.split('\n').map((l) => theme.muted(l));
-    printBox(['', ...configLines, ''], { title: 'Pipeline Configuration', color: 'dim', padding: 1 });
+    console.error(pipeline.pipelineConfigurationBody);
   }
-
-  console.error();
 }
