@@ -1,22 +1,24 @@
 import { useState, useEffect } from 'react';
 
 const taglines = [
-  // Services (cyan)
-  { label: 'Services', text: 'APM traces, service maps, and distributed tracing across your stack', color: 'text-cyan-400' },
-  { label: 'Services', text: 'See every request, every dependency, every bottleneck', color: 'text-cyan-400' },
-  { label: 'Services', text: 'From microservices to monoliths—full visibility', color: 'text-cyan-400' },
-  // Metrics (emerald)
-  { label: 'Metrics', text: 'Prometheus metrics, PromQL queries, and custom dashboards', color: 'text-emerald-400' },
-  { label: 'Metrics', text: 'RED metrics computed automatically from trace data', color: 'text-emerald-400' },
-  { label: 'Metrics', text: 'Real-time dashboards for the signals that matter', color: 'text-emerald-400' },
+  // Traces (cyan)
+  { label: 'Traces', text: 'Distributed tracing with auto-generated service maps and RED metrics', color: 'text-cyan-400' },
+  { label: 'Traces', text: 'OpenTelemetry-native. No proprietary agent required', color: 'text-cyan-400' },
   // Logs (amber)
-  { label: 'Logs', text: 'Correlate logs with traces—debug in minutes, not days', color: 'text-amber-400' },
-  { label: 'Logs', text: 'Full-text search with PPL structured queries', color: 'text-amber-400' },
-  { label: 'Logs', text: 'From ingestion to insight, all in one place', color: 'text-amber-400' },
-  // AI (orange)
-  { label: 'AI Agents', text: 'Agent tracing with GenAI semantic conventions and MCP support', color: 'text-orange-400' },
-  { label: 'AI Agents', text: 'Your agents aren\'t black boxes anymore', color: 'text-orange-400' },
-  { label: 'AI Agents', text: 'Trace graphs, token usage, and tool calls for every agent run', color: 'text-orange-400' },
+  { label: 'Logs', text: 'Full-text search + PPL structured queries across billions of log events', color: 'text-amber-400' },
+  { label: 'Logs', text: 'Correlate logs with traces in one click. No context switching', color: 'text-amber-400' },
+  // AI Agents (orange)
+  { label: 'AI Agents', text: 'Trace LLM calls, tool use, and agent workflows end-to-end', color: 'text-orange-400' },
+  { label: 'AI Agents', text: 'GenAI semantic conventions, MCP support, token cost tracking', color: 'text-orange-400' },
+  // PPL (violet)
+  { label: 'PPL', text: 'ML-powered log clustering in one command. No regex, no ML expertise', color: 'text-violet-400' },
+  { label: 'PPL', text: 'Anomaly detection built into queries — no external ML service needed', color: 'text-violet-400' },
+  // Metrics (emerald)
+  { label: 'Metrics', text: 'Prometheus-compatible with PromQL. RED metrics computed automatically', color: 'text-emerald-400' },
+  { label: 'Metrics', text: 'Custom dashboards with real-time panels and alerting', color: 'text-emerald-400' },
+  // Open Source (green)
+  { label: 'Open', text: 'Apache 2.0. No feature gates. No lock-in', color: 'text-green-400' },
+  { label: 'Open', text: 'Self-host anywhere. Your data stays yours', color: 'text-green-400' },
 ];
 
 export function CyclingTagline() {
@@ -39,13 +41,13 @@ export function CyclingTagline() {
 
   return (
     <div className="h-8 flex items-center relative">
-      <span className={`${current.color} text-sm font-semibold uppercase tracking-wide`}>
+      <span className={`${current.color} text-sm font-semibold uppercase tracking-wide whitespace-nowrap w-[100px]`}>
         {current.label}
       </span>
-      <div className="absolute left-[85px] top-0 h-full flex items-center overflow-hidden w-[400px]">
+      <div className="absolute left-[100px] top-0 h-full flex items-center overflow-hidden" style={{ width: 'calc(100vw - 200px)', maxWidth: '500px' }}>
         <span
-          className={`text-slate-400 whitespace-nowrap transition-all duration-500 ease-in-out ${
-            isVisible ? 'opacity-100 translate-x-0' : 'opacity-0 -translate-x-2'
+          className={`text-slate-400 text-sm whitespace-nowrap transition-opacity duration-500 ease-in-out ${
+            isVisible ? 'opacity-100' : 'opacity-0'
           }`}
         >
           {current.text}

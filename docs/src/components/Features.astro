@@ -8,7 +8,7 @@ interface Feature {
   title: string;
   description: string;
   bullets: string[];
-  visualType: 'code' | 'mockup' | 'grid';
+  visualType: 'code' | 'mockup' | 'grid' | 'image';
   visualContent: any;
   imagePosition: 'left' | 'right';
 }
@@ -19,6 +19,8 @@ const iconPaths = {
   'file-text': 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
   'check-circle': 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z',
   'zap': 'M13 10V3L4 14h7v7l9-11h-7z',
+  search: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z',
+  brain: 'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z',
 };
 
 const features: Feature[] = [
@@ -26,90 +28,107 @@ const features: Feature[] = [
     id: 'apm-tracing',
     icon: 'activity',
     title: 'APM & Distributed Tracing',
-    description: 'End-to-end visibility across services with service maps, latency breakdowns, and error tracking. OpenTelemetry-native.',
+    description: 'End-to-end visibility across services with auto-generated service maps, latency breakdowns, and error tracking. OpenTelemetry-native with zero proprietary agents.',
     bullets: [
       'Service maps and dependency visualization',
-      'Distributed trace correlation across services',
-      'Latency percentiles, error rates, and throughput',
+      'P50/P95/P99 latency, error rates, and throughput',
+      'OTel-native — works with any language or framework',
     ],
-    visualType: 'code',
-    visualContent: {
-      language: 'yaml',
-      code: `# otel-collector-config.yaml
-receivers:
-  otlp:
-    protocols:
-      grpc:
-        endpoint: 0.0.0.0:4317
-
-exporters:
-  opensearch:
-    http:
-      endpoint: https://opensearch:9200
-    dataset: traces
-
-service:
-  pipelines:
-    traces:
-      receivers: [otlp]
-      exporters: [opensearch]`,
-    },
+    visualType: 'image',
+    visualContent: { src: '/images/apm/application-map.png', alt: 'APM Service Map' },
     imagePosition: 'right',
   },
   {
     id: 'metrics-dashboards',
     icon: 'zap',
     title: 'Metrics & Dashboards',
-    description: 'Prometheus-compatible metrics with PromQL support. Custom dashboards and RED metrics computed automatically from trace data.',
+    description: 'Prometheus-compatible metrics with PromQL support. Custom dashboards and RED metrics computed automatically from trace data. All signals in one platform.',
     bullets: [
       'Prometheus remote-write and native PromQL support',
-      'RED metrics (Rate, Errors, Duration) from Data Prepper',
-      'Custom dashboards with real-time panels and charts',
+      'RED metrics (Rate, Errors, Duration) auto-computed from traces',
+      'Custom dashboards with real-time panels and alerting',
     ],
-    visualType: 'grid',
-    visualContent: {
-      items: [
-        { title: 'Request Rate', progress: 99 },
-        { title: 'P99 Latency', progress: 95 },
-        { title: 'Error Rate', progress: 82 },
-        { title: 'Throughput', progress: 97 },
-        { title: 'Saturation', progress: 88 },
-        { title: 'Availability', progress: 94 },
-        { title: 'P50 Latency', progress: 91 },
-        { title: 'Success Rate', progress: 96 },
-      ],
-    },
+    visualType: 'image',
+    visualContent: { src: '/images/dashboards/prometheus.png', alt: 'Prometheus Metrics Dashboard' },
     imagePosition: 'left',
   },
   {
     id: 'logs',
     icon: 'file-text',
-    title: 'Log Analytics & Correlation',
-    description: 'Ingest, search, and correlate logs with traces. Full-text search with PPL and OpenTelemetry-native log collection.',
+    title: 'Log Analytics with PPL',
+    description: 'Full-text search meets a pipe-based query language. PPL lets you filter, transform, aggregate, and correlate logs with traces — all in one query. 50+ commands and 200+ built-in functions.',
     bullets: [
-      'Log-to-trace correlation in one click',
-      'Full-text search with PPL structured field queries',
-      'OTel-native log ingestion via OTLP',
+      'Complete query language — joins, subqueries, stats, and more',
+      'ML-powered log pattern clustering with zero regex',
+      'Log-to-trace correlation via traceId in one click',
     ],
-    visualType: 'mockup',
-    visualContent: {
-      type: 'prompt-card',
-    },
+    visualType: 'image',
+    visualContent: { src: '/images/discover-logs/discover-logs-interface.png', alt: 'Log Analytics Interface' },
     imagePosition: 'right',
   },
   {
     id: 'ai-observability',
     icon: 'check-circle',
     title: 'AI Agent & LLM Observability',
-    description: 'Trace AI agent workflows with OpenTelemetry GenAI semantic conventions. Visualize execution graphs, monitor token usage, and debug agent behavior.',
+    description: 'Trace AI agent workflows end-to-end. Visualize execution graphs, monitor token usage, track tool calls, and debug agent behavior with OpenTelemetry GenAI semantic conventions.',
     bullets: [
       'Agent tracing with tool-call and reasoning step visualization',
-      'GenAI semantic conventions for standard, interoperable traces',
-      'MCP support and Python/JavaScript SDKs',
+      'Token usage, cost tracking, and failure rate analysis',
+      'Python/JS SDKs + MCP support — works with any AI framework',
     ],
-    visualType: 'mockup',
+    visualType: 'image',
+    visualContent: { src: '/images/agent-traces/agent-graph.png', alt: 'Agent Execution Graph' },
+    imagePosition: 'left',
+  },
+  {
+    id: 'ppl-query',
+    icon: 'search',
+    title: 'PPL Query Language',
+    description: 'A pipe-based query language built for observability. Filter, transform, aggregate, join across indices, and run ML algorithms — all in a single query pipeline.',
+    bullets: [
+      'Cross-signal correlation: join logs with traces on traceId',
+      'Automatic error pattern clustering — no regex required',
+      'Anomaly detection and k-means clustering built into queries',
+    ],
+    visualType: 'code',
     visualContent: {
-      type: 'alert-card',
+      language: 'ppl',
+      code: `source = logs-otel-v1*
+| where severityText = 'ERROR'
+| patterns body method=brain mode=aggregation
+    by \`resource.attributes.service.name\`
+| sort - pattern_count
+| head 20
+
+# Zero regex. ML-powered clustering.
+# Try it in the Live Playground →`,
+    },
+    imagePosition: 'right',
+  },
+  {
+    id: 'built-in-ml',
+    icon: 'brain',
+    title: 'Built-in Machine Learning',
+    description: 'Anomaly detection and clustering run directly in your query pipeline — no separate ML service, no model management, no data science team required.',
+    bullets: [
+      'Random Cut Forest anomaly detection per service',
+      'K-means clustering for automatic service health tiers',
+      'Trendline and rolling window analytics built in',
+    ],
+    visualType: 'code',
+    visualContent: {
+      language: 'ppl',
+      code: `source = otel-v1-apm-span-*
+| stats avg(durationInNanos) as avg_latency
+    by span(startTime, 5m) as window,
+       serviceName
+| ml action='train' algorithm='rcf'
+    time_field='window'
+    category_field='serviceName'
+| where anomaly_grade > 0
+| sort - anomaly_grade
+
+# Built-in ML. No external service.`,
     },
     imagePosition: 'left',
   },
@@ -125,7 +144,7 @@ service:
           Full-Stack Observability, One Platform
         </h2>
         <p class="text-lg text-slate-400 max-w-3xl mx-auto">
-          From service health to AI agent performance — traces, logs, metrics, dashboards, and more
+          From service health to AI agent performance — traces, logs, metrics, dashboards, built-in ML, and a powerful query language
         </p>
       </div>
 
@@ -208,6 +227,17 @@ service:
                     </div>
                     <!-- Code content -->
                     <pre class="p-6 overflow-x-auto"><code class="text-sm font-mono text-slate-300 leading-relaxed">{feature.visualContent.code}</code></pre>
+                  </div>
+                )}
+
+                {feature.visualType === 'image' && (
+                  <div class="rounded-xl overflow-hidden border border-slate-700 bg-slate-950">
+                    <img
+                      src={feature.visualContent.src}
+                      alt={feature.visualContent.alt}
+                      class="w-full h-auto"
+                      loading="lazy"
+                    />
                   </div>
                 )}
 

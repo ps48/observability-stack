@@ -1,0 +1,106 @@
+---
+// FeatureShowcase.astro - Visual showcase of platform capabilities
+// Uses real screenshots from the documentation
+
+interface ShowcaseItem {
+  title: string;
+  description: string;
+  image: string;
+  alt: string;
+  link: string;
+}
+
+const showcaseItems: ShowcaseItem[] = [
+  {
+    title: 'APM Service Maps',
+    description: 'Auto-generated topology maps showing service dependencies, latency, and error rates across your distributed system.',
+    image: '/images/apm/application-map.png',
+    alt: 'APM Application Map showing service dependencies',
+    link: '/docs/apm/',
+  },
+  {
+    title: 'Distributed Trace Detail',
+    description: 'Full span tree with RED metrics, faceted fields, and cross-signal correlation to related logs.',
+    image: '/images/discover-traces/trace-detail-page.png',
+    alt: 'Trace detail page with span tree and RED metrics',
+    link: '/docs/investigate/',
+  },
+  {
+    title: 'Log Investigation',
+    description: 'Search and analyze billions of log events with full-text search and PPL structured queries.',
+    image: '/images/discover-logs/discover-logs-interface.png',
+    alt: 'Log investigation interface with PPL queries',
+    link: '/docs/investigate/',
+  },
+  {
+    title: 'AI Agent Execution Graph',
+    description: 'Visualize agent workflows as DAGs — trace LLM calls, tool execution, and reasoning steps.',
+    image: '/images/agent-traces/agent-graph.png',
+    alt: 'Agent execution graph showing DAG of agent workflow',
+    link: '/docs/ai-observability/',
+  },
+  {
+    title: 'Prometheus Metrics',
+    description: 'PromQL-powered metrics dashboards with custom panels, alerting, and auto-computed RED metrics.',
+    image: '/images/dashboards/prometheus.png',
+    alt: 'Prometheus metrics dashboard',
+    link: '/docs/dashboards/',
+  },
+  {
+    title: 'Cross-Signal Correlation',
+    description: 'Click from a trace span to correlated logs, or from logs to related traces. All signals connected.',
+    image: '/images/datasets/correlations-span-details-logs.png',
+    alt: 'Cross-signal correlation between traces and logs',
+    link: '/docs/investigate/',
+  },
+];
+---
+
+<section id="showcase" class="py-20 px-6 bg-slate-900">
+  <div class="max-w-7xl mx-auto">
+    <div class="text-center mb-12">
+      <h2 class="text-4xl md:text-5xl font-bold text-white mb-4">
+        See It in Action
+      </h2>
+      <p class="text-xl text-slate-300 max-w-3xl mx-auto">
+        Real screenshots from the OpenSearch Observability Stack. Every feature shown here is available in the live playground.
+      </p>
+    </div>
+
+    <!-- Screenshot Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      {showcaseItems.map((item) => (
+        <a href={item.link} class="group block rounded-xl overflow-hidden border border-slate-700 bg-slate-950 hover:border-cyan-500/50 transition-all duration-300">
+          <div class="overflow-hidden">
+            <img
+              src={item.image}
+              alt={item.alt}
+              class="w-full h-48 object-cover object-top group-hover:scale-105 transition-transform duration-300"
+              loading="lazy"
+            />
+          </div>
+          <div class="p-5">
+            <h3 class="text-lg font-bold text-white mb-2 group-hover:text-cyan-400 transition-colors">
+              {item.title}
+            </h3>
+            <p class="text-sm text-slate-400 leading-relaxed">
+              {item.description}
+            </p>
+          </div>
+        </a>
+      ))}
+    </div>
+
+    <!-- Bottom CTA -->
+    <div class="text-center mt-12">
+      <div class="flex gap-4 justify-center">
+        <a href="https://observability.playground.opensearch.org" target="_blank" rel="noopener noreferrer" class="px-8 py-4 bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white font-bold rounded-lg transition-all duration-200 shadow-lg shadow-emerald-500/50">
+          Try Live Playground
+        </a>
+        <a href="/docs/" class="px-8 py-4 bg-slate-800/50 hover:bg-slate-700/50 text-white font-semibold rounded-lg transition-all duration-200 border-2 border-cyan-500/50 hover:border-cyan-400">
+          Explore Docs
+        </a>
+      </div>
+    </div>
+  </div>
+</section>
