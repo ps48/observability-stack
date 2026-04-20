@@ -1,0 +1,64 @@
+# PostgreSQL Monitoring Dashboard
+# PromQL panels showing server-side infrastructure metrics
+
+dashboard:
+  id: postgresql-monitoring-dashboard
+  title: PostgreSQL Monitoring
+  description: PostgreSQL server metrics from the OTel Collector postgresql receiver
+
+panels:
+  - id: pg-active-backends
+    title: Active Backends
+    query: postgresql_backends
+
+  - id: pg-max-connections
+    title: Max Connections
+    query: postgresql_connection_max
+
+  - id: pg-qps
+    title: Queries Per Second (commits + rollbacks)
+    query: rate(postgresql_commits_total[5m]) + rate(postgresql_rollbacks_total[5m])
+
+  - id: pg-cache-hit-ratio
+    title: Cache Hit Ratio
+    query: rate(postgresql_blks_hit_total[5m]) / (rate(postgresql_blks_hit_total[5m]) + rate(postgresql_blks_read_total[5m]))
+
+  - id: pg-tup-fetched
+    title: Tuples Fetched Rate
+    query: rate(postgresql_tup_fetched_total[5m])
+
+  - id: pg-tup-inserted
+    title: Tuples Inserted Rate
+    query: rate(postgresql_tup_inserted_total[5m])
+
+  - id: pg-tup-updated
+    title: Tuples Updated Rate
+    query: rate(postgresql_tup_updated_total[5m])
+
+  - id: pg-tup-deleted
+    title: Tuples Deleted Rate
+    query: rate(postgresql_tup_deleted_total[5m])
+
+  - id: pg-deadlocks
+    title: Deadlocks
+    query: postgresql_deadlocks_total
+
+  - id: pg-locks
+    title: Active Locks by Type
+    query: postgresql_database_locks
+
+  - id: pg-db-size
+    title: Database Size (bytes)
+    query: postgresql_db_size_bytes
+
+  - id: pg-sequential-scans
+    title: Sequential Scans Rate
+    query: rate(postgresql_sequential_scans_total[5m])
+
+  - id: pg-index-scans
+    title: Index Scans Rate
+    query: rate(postgresql_index_scans_total[5m])
+
+  - id: pg-bgwriter-buffers
+    title: Bgwriter Buffers Allocated Rate
+    query: rate(postgresql_bgwriter_buffers_allocated_total[5m])

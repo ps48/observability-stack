@@ -3,6 +3,14 @@
 
 CREATE USER otelu WITH PASSWORD 'otelp';
 
+-- Monitoring user for OTel Collector receivers (postgresql + sqlquery)
+CREATE USER monitoring_user WITH PASSWORD 'monitoring_password';
+GRANT pg_monitor TO monitoring_user;
+
+-- Enable pg_stat_statements for per-query performance monitoring
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO monitoring_user;
+
 -- Accounting Service: create a schema
 CREATE SCHEMA accounting;
 GRANT USAGE ON SCHEMA accounting TO otelu;

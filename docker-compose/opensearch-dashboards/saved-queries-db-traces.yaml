@@ -1,0 +1,95 @@
+# Saved queries for database observability - trace spans
+# PPL queries for Valkey (Redis) and PostgreSQL span analysis
+
+queries:
+  - id: valkey_all_operations
+    title: "Valkey: All operations"
+    description: All Valkey/Redis operations from the Cart service
+    language: PPL
+    query: |
+      source=otel-v1-apm-span-*
+      | WHERE `attributes.db_system` = 'redis'
+
+  - id: valkey_slow_commands
+    title: "Valkey: Slow commands (>10ms)"
+    description: Valkey commands taking longer than 10 milliseconds
+    language: PPL
+    query: |
+      source=otel-v1-apm-span-*
+      | WHERE `attributes.db_system` = 'redis' AND `durationInNanos` > 10000000
+      | sort - durationInNanos
+
+  - id: valkey_operations_by_command
+    title: "Valkey: Operations by command"
+    description: Count of Valkey operations grouped by command type
+    language: PPL
+    query: |
+      source=otel-v1-apm-span-*
+      | WHERE `attributes.db_system` = 'redis'
+      | stats count() as operations by name
+
+  - id: postgresql_all_operations
+    title: "PostgreSQL: All operations"
+    description: All PostgreSQL database operations across services
+    language: PPL
+    query: |
+      source=otel-v1-apm-span-*
+      | WHERE `attributes.db_system` = 'postgresql' OR `attributes.db_system_name` = 'postgresql'
+
+  - id: postgresql_slow_queries
+    title: "PostgreSQL: Slow queries (>100ms)"
+    description: PostgreSQL queries taking longer than 100 milliseconds
+    language: PPL
+    query: |
+      source=otel-v1-apm-span-*
+      | WHERE (`attributes.db_system` = 'postgresql' OR `attributes.db_system_name` = 'postgresql')
+        AND `durationInNanos` > 100000000
+      | sort - durationInNanos
+
+  - id: postgresql_operations_by_service
+    title: "PostgreSQL: Operations by service"
+    description: Count of PostgreSQL operations grouped by service and operation type
+    language: PPL
+    query: |
+      source=otel-v1-apm-span-*
+      | WHERE `attributes.db_system` = 'postgresql' OR `attributes.db_system_name` = 'postgresql'
+      | stats count() as operations by serviceName, name
+
+  - id: postgresql_insert_operations
+    title: "PostgreSQL: INSERT operations"
+    description: All PostgreSQL INSERT operations (accounting writes)
+    language: PPL
+    query: |
+      source=otel-v1-apm-span-*
+      | WHERE (`attributes.db_system` = 'postgresql' OR `attributes.db_system_name` = 'postgresql')
+        AND name LIKE '%INSERT%' OR name LIKE '%postgresql%'
+
+  - id: db_errors_all
+    title: "Database: All error spans"
+    description: Database spans with errors across Valkey and PostgreSQL
+    language: PPL
+    query: |
+      source=otel-v1-apm-span-*
+      | WHERE (`attributes.db_system` = 'redis' OR `attributes.db_system` = 'postgresql' OR `attributes.db_system_name` = 'postgresql')
+        AND `status.code` = 2
+
+  - id: db_operations_latency_stats
+    title: "Database: Latency statistics"
+    description: Average and max latency for database operations by service and DB system
+    language: PPL
+    query: |
+      source=otel-v1-apm-span-*
+      | WHERE `attributes.db_system` = 'redis' OR `attributes.db_system` = 'postgresql' OR `attributes.db_system_name` = 'postgresql'
+      | eval latency_ms = durationInNanos / 1000000
+      | stats avg(latency_ms) as avg_latency_ms, max(latency_ms) as max_latency_ms, count() as total
+        by serviceName, `attributes.db_system`
+
+  - id: db_service_errors_logs
+    title: "Database: Service error logs"
+    description: Error logs from database-connected services
+    language: PPL
+    query: |
+      source=logs-otel-v1*
+      | WHERE `resource.attributes.service.name` IN ('cart', 'accounting', 'product-catalog', 'product-reviews')
+        AND severity_text = 'ERROR'
+      | sort - time
