@@ -1,0 +1,87 @@
+# Saved queries for database observability - Prometheus infrastructure metrics
+# PromQL queries for Valkey (Redis) and PostgreSQL server-side metrics
+
+queries:
+  - id: valkey_memory_usage
+    title: "Valkey: Memory usage"
+    description: Valkey memory usage over time
+    language: PROMQL
+    query: |
+      redis_memory_used_bytes
+
+  - id: valkey_hit_rate
+    title: "Valkey: Cache hit rate"
+    description: Valkey keyspace hit rate percentage
+    language: PROMQL
+    query: |
+      redis_keyspace_hits_total / (redis_keyspace_hits_total + redis_keyspace_misses_total)
+
+  - id: valkey_commands_per_sec
+    title: "Valkey: Commands per second"
+    description: Rate of commands processed by Valkey
+    language: PROMQL
+    query: |
+      rate(redis_commands_processed_total[5m])
+
+  - id: valkey_connected_clients
+    title: "Valkey: Connected clients"
+    description: Number of connected clients
+    language: PROMQL
+    query: |
+      redis_clients_connected
+
+  - id: valkey_cmd_latency
+    title: "Valkey: Per-command latency"
+    description: Average latency per Redis command type
+    language: PROMQL
+    query: |
+      redis_cmd_latency_seconds
+
+  - id: valkey_network_io
+    title: "Valkey: Network I/O bytes/sec"
+    description: Network input and output rate
+    language: PROMQL
+    query: |
+      rate(redis_net_input_bytes_total[5m]) + rate(redis_net_output_bytes_total[5m])
+
+  - id: postgresql_active_backends
+    title: "PostgreSQL: Active backends"
+    description: Number of active database backends
+    language: PROMQL
+    query: |
+      postgresql_backends
+
+  - id: postgresql_qps
+    title: "PostgreSQL: Queries per second"
+    description: Combined commits and rollbacks rate
+    language: PROMQL
+    query: |
+      rate(postgresql_commits_total[5m]) + rate(postgresql_rollbacks_total[5m])
+
+  - id: postgresql_cache_hit_ratio
+    title: "PostgreSQL: Cache hit ratio"
+    description: Buffer cache hit ratio
+    language: PROMQL
+    query: |
+      rate(postgresql_blks_hit_total[5m]) / (rate(postgresql_blks_hit_total[5m]) + rate(postgresql_blks_read_total[5m]))
+
+  - id: postgresql_row_operations
+    title: "PostgreSQL: Row operations rate"
+    description: Rate of tuple operations (fetched, inserted, updated, deleted)
+    language: PROMQL
+    query: |
+      rate(postgresql_tup_fetched_total[5m])
+
+  - id: postgresql_deadlocks
+    title: "PostgreSQL: Deadlocks"
+    description: Deadlock count
+    language: PROMQL
+    query: |
+      postgresql_deadlocks_total
+
+  - id: postgresql_locks
+    title: "PostgreSQL: Active locks"
+    description: Current lock count by type
+    language: PROMQL
+    query: |
+      postgresql_database_locks

@@ -24,6 +24,10 @@ networks:
 volumes:
   prometheus-data:
     driver: local
+  postgresql-logs:
+    driver: local
+  valkey-logs:
+    driver: local
 
 services:
   # OpenTelemetry Collector - Receives telemetry data via OTLP protocol
@@ -34,6 +38,8 @@ services:
     command: ["--config=/etc/otelcol-config.yml"]
     volumes:
       - ./docker-compose/otel-collector/config.yaml:/etc/otelcol-config.yml
+      - postgresql-logs:/var/log/postgresql:ro
+      - valkey-logs:/var/log/valkey:ro
     ports:
       # OTLP gRPC receiver - high-performance binary protocol
       - "${OTEL_COLLECTOR_PORT_GRPC}:4317"
@@ -54,6 +60,8 @@ services:
       - OTEL_COLLECTOR_PORT_HTTP=${OTEL_COLLECTOR_PORT_HTTP}
       - OPENSEARCH_HOST=${OPENSEARCH_HOST}
       - OPENSEARCH_PORT=${OPENSEARCH_PORT}
+      - POSTGRES_MONITORING_PASSWORD=${POSTGRES_MONITORING_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
       - GOMEMLIMIT=160MiB
     depends_on:
       opensearch:
@@ -191,8 +199,12 @@ services:
       - ./docker-compose/opensearch-dashboards/init/init-opensearch-dashboards.py:/init.py
       - ./docker-compose/opensearch-dashboards/saved-queries-traces.yaml:/config/saved-queries-traces.yaml
       - ./docker-compose/opensearch-dashboards/saved-queries-metrics.yaml:/config/saved-queries-metrics.yaml
+      - ./docker-compose/opensearch-dashboards/saved-queries-db-traces.yaml:/config/saved-queries-db-traces.yaml
+      - ./docker-compose/opensearch-dashboards/saved-queries-db-metrics.yaml:/config/saved-queries-db-metrics.yaml
       - ./docker-compose/opensearch-dashboards/dashboard-opensearch-health.yaml:/config/dashboard-opensearch-health.yaml
       - ./docker-compose/opensearch-dashboards/dashboard-pipeline-health.yaml:/config/dashboard-pipeline-health.yaml
+      - ./docker-compose/opensearch-dashboards/dashboard-valkey.yaml:/config/dashboard-valkey.yaml
+      - ./docker-compose/opensearch-dashboards/dashboard-postgresql.yaml:/config/dashboard-postgresql.yaml
       - ./docker-compose/opensearch-dashboards/init/architecture.png:/config/architecture.png
       - ./docker-compose/opensearch-dashboards/init/dashboard-astronomy-shop.ndjson:/config/dashboard-astronomy-shop.ndjson
     networks:

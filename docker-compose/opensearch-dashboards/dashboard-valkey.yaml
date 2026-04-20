@@ -1,0 +1,64 @@
+# Valkey (Redis) Monitoring Dashboard
+# PromQL panels showing server-side infrastructure metrics
+
+dashboard:
+  id: valkey-monitoring-dashboard
+  title: Valkey Monitoring
+  description: Valkey/Redis server metrics from the OTel Collector redis receiver
+
+panels:
+  - id: valkey-memory-usage
+    title: Memory Usage
+    query: redis_memory_used_bytes
+
+  - id: valkey-memory-fragmentation
+    title: Memory Fragmentation Ratio
+    query: redis_memory_fragmentation_ratio
+
+  - id: valkey-hit-miss-rate
+    title: Keyspace Hit Rate
+    query: redis_keyspace_hits_total / (redis_keyspace_hits_total + redis_keyspace_misses_total)
+
+  - id: valkey-commands-per-sec
+    title: Commands Per Second
+    query: redis_commands_per_second
+
+  - id: valkey-connected-clients
+    title: Connected Clients
+    query: redis_clients_connected
+
+  - id: valkey-blocked-clients
+    title: Blocked Clients
+    query: redis_clients_blocked
+
+  - id: valkey-network-input
+    title: Network Input (bytes/sec)
+    query: rate(redis_net_input_bytes_total[5m])
+
+  - id: valkey-network-output
+    title: Network Output (bytes/sec)
+    query: rate(redis_net_output_bytes_total[5m])
+
+  - id: valkey-keys-by-db
+    title: Keys by Database
+    query: redis_db_keys
+
+  - id: valkey-evicted-keys
+    title: Evicted Keys Rate
+    query: rate(redis_keys_evicted_total[5m])
+
+  - id: valkey-expired-keys
+    title: Expired Keys Rate
+    query: rate(redis_keys_expired_total[5m])
+
+  - id: valkey-cpu-time
+    title: CPU Time (seconds)
+    query: rate(redis_cpu_time_seconds_total[5m])
+
+  - id: valkey-cmd-calls
+    title: Command Calls by Type
+    query: rate(redis_cmd_calls_total[5m])
+
+  - id: valkey-cmd-latency
+    title: Command Latency by Type
+    query: redis_cmd_latency_seconds

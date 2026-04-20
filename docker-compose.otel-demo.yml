@@ -43,7 +43,7 @@ services:
       - OTEL_RESOURCE_ATTRIBUTES
       - OTEL_SERVICE_NAME=accounting
       - DB_CONNECTION_STRING=Host=${POSTGRES_HOST};Username=otelu;Password=otelp;Database=${POSTGRES_DB}
-      - OTEL_DOTNET_AUTO_TRACES_ENTITYFRAMEWORKCORE_INSTRUMENTATION_ENABLED=false
+      - OTEL_DOTNET_AUTO_TRACES_ENTITYFRAMEWORKCORE_INSTRUMENTATION_ENABLED=true
     depends_on:
       otel-collector:
         condition: service_started
@@ -698,6 +698,34 @@ services:
   postgresql:
     image: ${POSTGRES_IMAGE}
     container_name: postgresql
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_preload_libraries=pg_stat_statements"
+      - "-c"
+      - "log_min_duration_statement=200"
+      - "-c"
+      - "log_connections=on"
+      - "-c"
+      - "log_disconnections=on"
+      - "-c"
+      - "log_lock_waits=on"
+      - "-c"
+      - "log_statement=ddl"
+      - "-c"
+      - "log_line_prefix=%t [%p] %u@%d "
+      - "-c"
+      - "logging_collector=on"
+      - "-c"
+      - "log_directory=/var/log/postgresql"
+      - "-c"
+      - "log_filename=postgresql.log"
+      - "-c"
+      - "log_file_mode=0644"
+      - "-c"
+      - "log_truncate_on_rotation=on"
+      - "-c"
+      - "log_rotation_age=1d"
     deploy:
       resources:
         limits:
@@ -711,6 +739,7 @@ services:
       - POSTGRES_DB
     volumes:
       - ./docker-compose/opentelemetry-demo/src/postgresql/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - postgresql-logs:/var/log/postgresql
     <<: *network
     logging: *logging
 
@@ -718,7 +747,11 @@ services:
   valkey-cart:
     image: ${VALKEY_IMAGE}
     container_name: valkey-cart
-    user: valkey
+    user: root
+    command:
+      - "sh"
+      - "-c"
+      - "umask 0022 && exec valkey-server --loglevel verbose --slowlog-log-slower-than 10000 --logfile /var/log/valkey/valkey.log"
     deploy:
       resources:
         limits:
@@ -726,6 +759,8 @@ services:
     restart: unless-stopped
     ports:
       - "${VALKEY_PORT}"
+    volumes:
+      - valkey-logs:/var/log/valkey
     <<: *network
     logging: *logging
 

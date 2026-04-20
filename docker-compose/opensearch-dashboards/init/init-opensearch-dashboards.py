@@ -199,9 +199,12 @@ def get_existing_index_pattern(workspace_id, title):
             saved_objects = result.get("saved_objects", [])
             for obj in saved_objects:
                 attributes = obj.get("attributes", {})
-                # Exact match on title
-                if attributes.get("title") == title:
-                    return obj.get("id")
+                if attributes.get("title") != title:
+                    continue
+                obj_workspaces = obj.get("workspaces", [])
+                if workspace_id and workspace_id != "default" and workspace_id not in obj_workspaces:
+                    continue
+                return obj.get("id")
         return None
     except requests.exceptions.RequestException as e:
         print(f"⚠️  Error checking existing index pattern {title}: {e}")
@@ -1148,11 +1151,16 @@ def create_overview_dashboard(workspace_id):
     markdown_vis_id = "overview-markdown"
     dashboard_id = "observability-overview-dashboard"
 
-    # Check if dashboard already exists
-    if get_existing_dashboard(workspace_id, dashboard_id):
-        print("✅ Overview dashboard already exists")
-        set_default_dashboard(workspace_id, dashboard_id)
-        return dashboard_id
+    # Delete existing dashboard so it gets recreated with latest content
+    existing = get_existing_dashboard(workspace_id, dashboard_id)
+    if existing:
+        w = f"/w/{workspace_id}" if workspace_id and workspace_id != "default" else ""
+        for obj_type, obj_id in [("dashboard", dashboard_id), ("visualization", markdown_vis_id)]:
+            requests.delete(
+                f"{BASE_URL}{w}/api/saved_objects/{obj_type}/{obj_id}",
+                auth=(USERNAME, PASSWORD), headers={"osd-xsrf": "true"},
+                verify=False, timeout=10,
+            )
 
     print("📊 Creating Observability Stack overview dashboard...")
 
@@ -1210,12 +1218,31 @@ View latency, error rate, and throughput (RED metrics) for every instrumented se
 **Service map** — [View service map]({w}/app/observability-apm-application-map)
 Visualize service-to-service dependencies and traffic flow across your system.
 
+### Database monitoring
+**Valkey dashboard** — [Valkey monitoring]({w}/app/dashboards#/view/valkey-monitoring-dashboard)
+Memory usage, hit/miss rate, commands per second, connected clients, and per-command latency.
+
+**PostgreSQL dashboard** — [PostgreSQL monitoring]({w}/app/dashboards#/view/postgresql-monitoring-dashboard)
+Active backends, cache hit ratio, row operations, locks, deadlocks, and sequential vs index scans.
+
 ### Agent observability
 **Agent traces** — [Explore agent traces]({w}/app/agentTraces)
 Inspect individual AI agent invocations, tool calls, and LLM interactions.
 
 **Agent dashboard** — [Agent observability dashboard]({w}/app/dashboards#/view/agent-observability-dashboard)
 Monitor agent activity, token usage, and tool execution at a glance.
+
+### Failure simulation (feature flags)
+The OTel demo includes feature flags via **flagd** to simulate failure scenarios for debugging practice.
+Toggle flags by editing `demo.flagd.json` or via the flagd API at `http://flagd:8013`.
+
+| Flag | Effect | Dashboard to watch |
+|------|--------|--------------------|
+| `cartFailure` | Cart service fails — Valkey operations return errors | [Valkey monitoring]({w}/app/dashboards#/view/valkey-monitoring-dashboard) |
+| `kafkaQueueProblems` | Kafka queue overload — accounting service backs up, affects PostgreSQL writes | [PostgreSQL monitoring]({w}/app/dashboards#/view/postgresql-monitoring-dashboard) |
+| `productCatalogFailure` | Product catalog fails on a specific product — PostgreSQL read errors | [PostgreSQL monitoring]({w}/app/dashboards#/view/postgresql-monitoring-dashboard) |
+| `paymentFailure` | Payment service charge failures (configurable %) — downstream DB impact | [Explore traces]({w}/app/explore/traces) |
+| `loadGeneratorFloodHomepage` | Flood of requests — observe spike in DB operations across both dashboards | [Valkey]({w}/app/dashboards#/view/valkey-monitoring-dashboard) / [PostgreSQL]({w}/app/dashboards#/view/postgresql-monitoring-dashboard) |
 """
 
     # Create the markdown visualization
@@ -1464,6 +1491,660 @@ def import_ndjson_dashboard(workspace_id, ndjson_path):
     return total_success
 
 
+def _create_markdown_vis(workspace_id, vis_id, title, markdown_text):
+    """Create a markdown visualization for use as a section header in dashboards."""
+    import json
+
+    vis_state = json.dumps({
+        "title": title, "type": "markdown", "aggs": [],
+        "params": {"fontSize": 10, "openLinksInNewTab": False, "markdown": markdown_text},
+    })
+
+    payload = {
+        "attributes": {
+            "title": title,
+            "visState": vis_state,
+            "uiStateJSON": "{}",
+            "kibanaSavedObjectMeta": {"searchSourceJSON": json.dumps({})},
+        },
+    }
+    if workspace_id and workspace_id != "default":
+        payload["workspaces"] = [workspace_id]
+        url = f"{BASE_URL}/w/{workspace_id}/api/saved_objects/visualization/{vis_id}"
+    else:
+        url = f"{BASE_URL}/api/saved_objects/visualization/{vis_id}"
+
+    try:
+        response = requests.post(
+            url, auth=(USERNAME, PASSWORD),
+            headers={"Content-Type": "application/json", "osd-xsrf": "true"},
+            json=payload, verify=False, timeout=10,
+        )
+        if response.status_code in (200, 409):
+            return vis_id
+        return None
+    except requests.exceptions.RequestException:
+        return None
+
+
+def _viz_bar(axes_mapping, color="#00BD6B", horizontal=False):
+    """Bar chart visualization config."""
+    return {
+        "title": "", "chartType": "bar",
+        "params": {
+            "switchAxes": horizontal, "addLegend": True,
+            "legendTitle": "", "legendPosition": "bottom",
+            "tooltipOptions": {"mode": "all"},
+            "barSizeMode": "auto", "barWidth": 0.7, "barPadding": 0.1,
+            "showBarBorder": False, "barBorderWidth": 1, "barBorderColor": "#000000",
+            "thresholdOptions": {"baseColor": color, "thresholds": [], "thresholdStyle": "off"},
+            "useThresholdColor": True,
+            "standardAxes": [{"position": "bottom", "show": True,
+                              "labels": {"show": True, "filter": True, "rotate": 0, "truncate": 100},
+                              "title": {"text": ""}, "grid": {"showLines": False}, "axisRole": "x"}],
+            "titleOptions": {"show": False, "titleName": ""},
+            "bucket": {"aggregationType": "sum", "bucketTimeUnit": "auto"},
+            "showFullTimeRange": False,
+        },
+        "axesMapping": axes_mapping,
+    }
+
+
+def _viz_metric(value_field, time_field="span(time,5m)", color="#00BD6B", calc="last"):
+    """Single-value metric visualization config."""
+    return {
+        "title": "", "chartType": "metric",
+        "params": {
+            "showTitle": True, "title": "",
+            "showPercentage": True, "percentageColor": "standard",
+            "valueCalculation": calc,
+            "thresholdOptions": {"baseColor": color, "thresholds": []},
+            "useThresholdColor": True,
+            "textMode": "value_and_name",
+            "colorMode": "background_solid",
+        },
+        "axesMapping": {"value": value_field, "time": time_field},
+    }
+
+
+def _viz_table():
+    """Table visualization config."""
+    return {
+        "title": "", "chartType": "table",
+        "params": {
+            "baseColor": "#000000", "cellTypes": [], "dataLinks": [],
+            "footerCalculations": [], "globalAlignment": "left",
+            "hiddenColumns": [], "pageSize": 50, "showColumnFilter": False,
+            "showFooter": False, "thresholds": [], "visibleColumns": [],
+        },
+    }
+
+
+def _viz_gauge(value_field, color="#00BD6B"):
+    """Gauge visualization config."""
+    return {
+        "title": "", "chartType": "gauge",
+        "params": {
+            "showTitle": False,
+            "thresholdOptions": {"thresholds": [], "baseColor": color},
+            "title": "", "useThresholdColor": True, "valueCalculation": "mean",
+        },
+        "axesMapping": {"value": value_field},
+    }
+
+
+def _viz_area(color="#00BD6B"):
+    """Area chart visualization config (for time-series)."""
+    ax = [{"position": "bottom", "show": True,
+           "labels": {"show": True, "filter": True, "rotate": 0, "truncate": 100},
+           "title": {"text": ""}, "grid": {"showLines": False}, "axisRole": "x"},
+          {"position": "left", "show": True,
+           "labels": {"show": True, "filter": True, "rotate": 0, "truncate": 100},
+           "title": {"text": ""}, "grid": {"showLines": False}, "axisRole": "y"}]
+    return {
+        "title": "", "chartType": "area",
+        "params": {
+            "addLegend": True, "legendTitle": "", "legendPosition": "bottom",
+            "addTimeMarker": False, "tooltipOptions": {"mode": "all"},
+            "thresholdOptions": {"baseColor": color, "thresholds": [], "thresholdStyle": "off"},
+            "standardAxes": ax, "titleOptions": {"show": False, "titleName": ""},
+            "showFullTimeRange": False,
+        },
+        "axesMapping": {"x": "Time", "y": "Value", "color": "Series"},
+    }
+
+
+def _viz_pie(size_field, color_field):
+    """Donut / pie chart visualization config."""
+    return {
+        "title": "", "chartType": "pie",
+        "params": {
+            "addTooltip": True, "addLegend": True,
+            "legendPosition": "bottom", "legendTitle": "",
+            "tooltipOptions": {"mode": "all"},
+            "exclusive": {"donut": True, "showValues": False, "showLabels": False, "truncate": 100},
+            "titleOptions": {"show": False, "titleName": ""},
+        },
+        "axesMapping": {"size": size_field, "color": color_field},
+    }
+
+
+def _create_ppl_explore_panel(workspace_id, panel_id, title, query, index_pattern_id,
+                               index_title, time_field, viz=None,
+                               columns=None, explore_type=None):
+    """Create a PPL explore panel backed by an OpenSearch index pattern.
+
+    viz should be a dict from one of the _viz_* helpers.
+    """
+    import json
+
+    if explore_type is None:
+        explore_type = "traces" if "apm-span" in index_title else "logs"
+
+    if columns is None:
+        columns = (["spanId", "status.code", "attributes.http.status_code",
+                     "resource.attributes.service.name", "kind", "name",
+                     "durationNano", "durationInNanos"]
+                    if explore_type == "traces"
+                    else ["body", "severityText", "resource.attributes.service.name"])
+
+    if viz is None:
+        viz = _viz_bar({"x": "x", "y": "y"})
+
+    dataset = {
+        "id": index_pattern_id, "title": index_title,
+        "type": "INDEX_PATTERN", "timeFieldName": time_field,
+    }
+    search_source = json.dumps({
+        "query": {"query": query, "language": "PPL", "dataset": dataset},
+        "filter": [], "indexRefName": "kibanaSavedObjectMeta.searchSourceJSON.index",
+    })
+
+    ref = {"name": "kibanaSavedObjectMeta.searchSourceJSON.index",
+           "type": "index-pattern", "id": index_pattern_id}
+
+    payload = {
+        "attributes": {
+            "title": title, "description": "", "hits": 0,
+            "columns": columns, "sort": [], "version": 1, "type": explore_type,
+            "visualization": json.dumps(viz),
+            "uiState": json.dumps({"activeTab": "explore_visualization_tab"}),
+            "kibanaSavedObjectMeta": {"searchSourceJSON": search_source},
+        },
+        "references": [ref, ref],
+    }
+    if workspace_id and workspace_id != "default":
+        payload["workspaces"] = [workspace_id]
+        url = f"{BASE_URL}/w/{workspace_id}/api/saved_objects/explore/{panel_id}"
+    else:
+        url = f"{BASE_URL}/api/saved_objects/explore/{panel_id}"
+
+    try:
+        response = requests.post(
+            url, auth=(USERNAME, PASSWORD),
+            headers={"Content-Type": "application/json", "osd-xsrf": "true"},
+            json=payload, verify=False, timeout=10,
+        )
+        if response.status_code == 200:
+            return panel_id
+        elif response.status_code == 409:
+            requests.put(
+                url, auth=(USERNAME, PASSWORD),
+                headers={"Content-Type": "application/json", "osd-xsrf": "true"},
+                json={"attributes": payload["attributes"], "references": payload["references"]},
+                verify=False, timeout=10,
+            )
+            return panel_id
+        return None
+    except requests.exceptions.RequestException:
+        return None
+
+
+def _viz_line(color="#00BD6B"):
+    """Line chart visualization config (for PromQL time-series)."""
+    return {
+        "title": "", "chartType": "line",
+        "params": {
+            "addLegend": True, "addTimeMarker": False, "legendPosition": "bottom",
+            "legendTitle": "", "lineMode": "straight", "lineStyle": "line", "lineWidth": 2,
+            "showFullTimeRange": False, "standardAxes": [],
+            "thresholdOptions": {"baseColor": color, "thresholds": [], "thresholdStyle": "off"},
+            "titleOptions": {"show": False, "titleName": ""},
+            "tooltipOptions": {"mode": "all"},
+        },
+        "axesMapping": {"color": "Series", "x": "Time", "y": "Value"},
+    }
+
+
+def _create_promql_explore_panel(workspace_id, panel_id, title, query,
+                                  prometheus_datasource_title="ObservabilityStack_Prometheus",
+                                  viz=None):
+    """Create a PromQL explore panel backed by a Prometheus datasource."""
+    import json
+
+    if viz is None:
+        viz = _viz_line()
+
+    dataset = {
+        "id": prometheus_datasource_title, "title": prometheus_datasource_title,
+        "type": "PROMETHEUS", "language": "PROMQL", "timeFieldName": "Time",
+        "dataSource": {}, "signalType": "metrics",
+    }
+    search_source = json.dumps({
+        "query": {"query": query, "language": "PROMQL", "dataset": dataset},
+        "filter": [], "indexRefName": "kibanaSavedObjectMeta.searchSourceJSON.index",
+    })
+
+    payload = {
+        "attributes": {
+            "title": title, "description": "", "hits": 0,
+            "columns": ["_source"], "sort": [], "version": 1, "type": "metrics",
+            "visualization": json.dumps(viz),
+            "uiState": json.dumps({"activeTab": "explore_visualization_tab"}),
+            "kibanaSavedObjectMeta": {"searchSourceJSON": search_source},
+        },
+        "references": [{"name": "kibanaSavedObjectMeta.searchSourceJSON.index",
+                         "type": "index-pattern", "id": prometheus_datasource_title}],
+    }
+    if workspace_id and workspace_id != "default":
+        payload["workspaces"] = [workspace_id]
+        url = f"{BASE_URL}/w/{workspace_id}/api/saved_objects/explore/{panel_id}"
+    else:
+        url = f"{BASE_URL}/api/saved_objects/explore/{panel_id}"
+
+    try:
+        response = requests.post(
+            url, auth=(USERNAME, PASSWORD),
+            headers={"Content-Type": "application/json", "osd-xsrf": "true"},
+            json=payload, verify=False, timeout=10,
+        )
+        if response.status_code == 200:
+            return panel_id
+        elif response.status_code == 409:
+            requests.put(
+                url, auth=(USERNAME, PASSWORD),
+                headers={"Content-Type": "application/json", "osd-xsrf": "true"},
+                json={"attributes": payload["attributes"], "references": payload["references"]},
+                verify=False, timeout=10,
+            )
+            return panel_id
+        return None
+    except requests.exceptions.RequestException:
+        return None
+
+
+def _assemble_dashboard(workspace_id, dashboard_id, title, description, panel_specs):
+    """Assemble a dashboard from a list of panel specs.
+
+    Each spec is (panel_id, panel_type, x, y, w, h) where panel_type is
+    'visualization' or 'explore'.
+    """
+    import json
+
+    panels = []
+    references = []
+    for i, (pid, ptype, x, y, w, h) in enumerate(panel_specs):
+        ref_name = f"panel_{i}"
+        panel_key = str(i)
+        ec = {"hidePanelTitles": True} if ptype == "visualization" else {}
+        panels.append({
+            "version": "3.6.0", "panelIndex": panel_key,
+            "gridData": {"i": panel_key, "x": x, "y": y, "w": w, "h": h},
+            "embeddableConfig": ec,
+            "panelRefName": ref_name,
+        })
+        references.append({"name": ref_name, "type": ptype, "id": pid})
+
+    payload = {
+        "attributes": {
+            "title": title, "description": description,
+            "panelsJSON": json.dumps(panels),
+            "optionsJSON": json.dumps({"useMargins": True, "hidePanelTitles": False}),
+            "timeRestore": False,
+            "kibanaSavedObjectMeta": {"searchSourceJSON": json.dumps({})},
+        },
+        "references": references,
+    }
+    if workspace_id and workspace_id != "default":
+        payload["workspaces"] = [workspace_id]
+        url = f"{BASE_URL}/w/{workspace_id}/api/saved_objects/dashboard/{dashboard_id}"
+    else:
+        url = f"{BASE_URL}/api/saved_objects/dashboard/{dashboard_id}"
+
+    try:
+        requests.delete(url, auth=(USERNAME, PASSWORD), headers={"osd-xsrf": "true"},
+                        verify=False, timeout=10)
+        response = requests.post(
+            url, auth=(USERNAME, PASSWORD),
+            headers={"Content-Type": "application/json", "osd-xsrf": "true"},
+            json=payload, verify=False, timeout=10,
+        )
+        return response.status_code == 200
+    except requests.exceptions.RequestException:
+        return False
+
+
+def create_valkey_dashboard(workspace_id, traces_pattern_id, logs_pattern_id):
+    """Create Valkey monitoring dashboard with client traces, logs, and server metrics."""
+    print("📊 Creating Valkey Monitoring dashboard...")
+    ok = lambda pid: pid is not None
+    specs = []
+
+    # ── Section: Client Telemetry (traces & logs from cart service) ──
+    vid = _create_markdown_vis(workspace_id, "valkey-client-md",
+                               "valkey-client-md", "#### Client telemetry — Cart → Valkey")
+    if ok(vid):
+        specs.append((vid, "visualization", 0, 0, 48, 2))
+
+    # Operations by command — donut pie
+    pid = _create_ppl_explore_panel(
+        workspace_id, "valkey-ops-by-cmd", "Operations by command",
+        "source = `otel-v1-apm-span*` | WHERE serviceName = 'cart' "
+        "AND (`attributes.db_system` = 'redis' OR name LIKE '%CartService%') "
+        "| stats count() as operations by name",
+        traces_pattern_id, "otel-v1-apm-span*", "endTime",
+        viz=_viz_pie("operations", "name"))
+    if ok(pid): specs.append((pid, "explore", 0, 2, 16, 10))
+
+    # Latency by command — horizontal bar (orange)
+    pid = _create_ppl_explore_panel(
+        workspace_id, "valkey-latency-by-cmd", "Avg latency by command (ms)",
+        "source = `otel-v1-apm-span*` | WHERE serviceName = 'cart' "
+        "AND (`attributes.db_system` = 'redis' OR name LIKE '%CartService%') "
+        "| eval latency_ms = durationInNanos / 1000000 "
+        "| stats avg(latency_ms) as avg_ms by name",
+        traces_pattern_id, "otel-v1-apm-span*", "endTime",
+        viz=_viz_bar({"x": "name", "y": "avg_ms"}, color="#E7664C", horizontal=True))
+    if ok(pid): specs.append((pid, "explore", 16, 2, 16, 10))
+
+    # Slow commands — table
+    pid = _create_ppl_explore_panel(
+        workspace_id, "valkey-slow-cmds", "Slow commands (>10ms)",
+        "source = `otel-v1-apm-span*` | WHERE serviceName = 'cart' "
+        "AND (`attributes.db_system` = 'redis' OR name LIKE '%CartService%') "
+        "AND `durationInNanos` > 10000000 "
+        "| sort - durationInNanos | head 20 "
+        "| fields name, durationInNanos, `status.code`",
+        traces_pattern_id, "otel-v1-apm-span*", "endTime",
+        viz=_viz_table())
+    if ok(pid): specs.append((pid, "explore", 32, 2, 16, 10))
+
+    # Error spans — metric (red)
+    pid = _create_ppl_explore_panel(
+        workspace_id, "valkey-error-spans", "Cart / Valkey error spans",
+        "source = `otel-v1-apm-span*` | WHERE serviceName = 'cart' "
+        "AND `status.code` = 2 "
+        "| stats count() as errors by span(endTime, 5m)",
+        traces_pattern_id, "otel-v1-apm-span*", "endTime",
+        viz=_viz_metric("errors", "span(endTime,5m)", color="#BD271E"))
+    if ok(pid): specs.append((pid, "explore", 0, 12, 24, 10))
+
+    # Cart error logs — metric (red)
+    pid = _create_ppl_explore_panel(
+        workspace_id, "valkey-cart-errors-logs", "Cart service error logs",
+        "source = `logs-otel-v1*` | WHERE `resource.attributes.service.name` = 'cart' "
+        "AND body LIKE '%Error status code%' "
+        "| stats count() as errors by span(time, 5m)",
+        logs_pattern_id, "logs-otel-v1*", "time",
+        viz=_viz_metric("errors", "span(time,5m)", color="#BD271E"))
+    if ok(pid): specs.append((pid, "explore", 24, 12, 24, 10))
+
+    # Recent Valkey commands — table showing db.statement
+    pid = _create_ppl_explore_panel(
+        workspace_id, "valkey-recent-cmds", "Recent Valkey commands",
+        "source = `otel-v1-apm-span*` | WHERE serviceName = 'cart' "
+        "AND `attributes.db_system` = 'redis' "
+        "| sort - endTime | head 50 "
+        "| fields endTime, name, `attributes.db.statement`, durationInNanos, `status.code`",
+        traces_pattern_id, "otel-v1-apm-span*", "endTime",
+        viz=_viz_table())
+    if ok(pid): specs.append((pid, "explore", 0, 22, 48, 12))
+
+    # ── Section: Server Logs (filelog receiver → Data Prepper → OpenSearch) ──
+    vid = _create_markdown_vis(workspace_id, "valkey-srvlog-md",
+                               "valkey-srvlog-md", "#### Server logs — Valkey log file")
+    if ok(vid):
+        specs.append((vid, "visualization", 0, 34, 48, 2))
+
+    pid = _create_ppl_explore_panel(
+        workspace_id, "valkey-server-logs", "Recent server logs",
+        "source = `logs-otel-v1*` | WHERE `resource.attributes.service.name` = 'valkey-cart' "
+        "AND `attributes.log_source` = 'server' "
+        "| sort - time | head 50 "
+        "| fields time, body",
+        logs_pattern_id, "logs-otel-v1*", "time",
+        viz=_viz_table())
+    if ok(pid): specs.append((pid, "explore", 0, 36, 32, 12))
+
+    pid = _create_ppl_explore_panel(
+        workspace_id, "valkey-server-log-count", "Server log volume",
+        "source = `logs-otel-v1*` | WHERE `resource.attributes.service.name` = 'valkey-cart' "
+        "AND `attributes.log_source` = 'server' "
+        "| stats count() as logs by span(time, 5m)",
+        logs_pattern_id, "logs-otel-v1*", "time",
+        viz=_viz_bar({"x": "span(time,5m)", "y": "logs"}, color="#9170B8"))
+    if ok(pid): specs.append((pid, "explore", 32, 36, 16, 12))
+
+    # ── Section: Server Telemetry (Prometheus metrics from redis receiver) ──
+    vid = _create_markdown_vis(workspace_id, "valkey-server-md",
+                               "valkey-server-md", "#### Server telemetry — Valkey instance metrics")
+    if ok(vid):
+        specs.append((vid, "visualization", 0, 48, 48, 2))
+
+    y = 50
+    # (id, title, query, viz_dict)
+    prom_panels = [
+        ("valkey-srv-memory", "Memory: used vs maxmemory (bytes)",
+         'label_replace(redis_memory_used_bytes, "series", "used", "", "") '
+         'or label_replace(redis_maxmemory_bytes > 0, "series", "maxmemory", "", "")',
+         _viz_area(color="#6092C0")),
+        ("valkey-srv-maxmemory", "maxmemory setting (bytes, 0 = no limit)",
+         "redis_maxmemory_bytes", _viz_line(color="#BD271E")),
+        ("valkey-srv-hitrate", "Keyspace hit rate",
+         "redis_keyspace_hits_total / (redis_keyspace_hits_total + redis_keyspace_misses_total)",
+         _viz_gauge("Value", color="#00BD6B")),
+        ("valkey-srv-cmdsec", "Commands / sec",
+         "rate(redis_commands_processed_total[5m])", _viz_line(color="#6092C0")),
+        ("valkey-srv-clients", "Connected clients",
+         "redis_clients_connected", _viz_line(color="#00BD6B")),
+        ("valkey-srv-network", "Network I/O (bytes/sec)",
+         "rate(redis_net_input_bytes_total[5m]) + rate(redis_net_output_bytes_total[5m])",
+         _viz_area(color="#D36086")),
+        ("valkey-srv-keys", "Keys by database",
+         "redis_db_keys", _viz_line(color="#9170B8")),
+        ("valkey-srv-cpu", "CPU time (sec/sec)",
+         "rate(redis_cpu_time_seconds_total[5m])", _viz_area(color="#E7664C")),
+        ("valkey-srv-cmd-calls", "Command calls by type",
+         "rate(redis_cmd_calls_total[5m])", _viz_line(color="#F90")),
+        ("valkey-srv-cmd-latency", "Command latency by type",
+         "redis_cmd_latency_seconds", _viz_line(color="#E7664C")),
+    ]
+    for i, (pid, title, query, viz) in enumerate(prom_panels):
+        col = (i % 3) * 16
+        row = y + (i // 3) * 10
+        rid = _create_promql_explore_panel(workspace_id, pid, title, query, viz=viz)
+        if ok(rid):
+            specs.append((rid, "explore", col, row, 16, 10))
+            print(f"  ✅ {title}")
+
+    if _assemble_dashboard(workspace_id, "valkey-monitoring-dashboard",
+                           "Valkey Monitoring",
+                           "Client traces & logs, server logs from filelog receiver, server metrics from redis receiver",
+                           specs):
+        print(f"✅ Created Valkey Monitoring dashboard ({len(specs)} panels)")
+    else:
+        print("⚠️  Valkey dashboard creation failed")
+
+
+def create_postgresql_dashboard(workspace_id, traces_pattern_id, logs_pattern_id):
+    """Create PostgreSQL monitoring dashboard with client traces, logs, and server metrics."""
+    print("📊 Creating PostgreSQL Monitoring dashboard...")
+    ok = lambda pid: pid is not None
+    specs = []
+
+    # ── Section: Client Telemetry (traces & logs from accounting, product-catalog, product-reviews) ──
+    vid = _create_markdown_vis(
+        workspace_id, "pg-client-md", "pg-client-md",
+        "#### Client telemetry — Accounting / Product Catalog / Product Reviews → PostgreSQL")
+    if ok(vid):
+        specs.append((vid, "visualization", 0, 0, 48, 2))
+
+    # Operations by service — donut pie
+    pid = _create_ppl_explore_panel(
+        workspace_id, "pg-ops-by-service", "Operations by service",
+        "source = `otel-v1-apm-span*` "
+        "| WHERE `attributes.db_system` = 'postgresql' OR `attributes.db_system_name` = 'postgresql' "
+        "| stats count() as operations by serviceName",
+        traces_pattern_id, "otel-v1-apm-span*", "endTime",
+        viz=_viz_pie("operations", "serviceName"))
+    if ok(pid): specs.append((pid, "explore", 0, 2, 16, 10))
+
+    # Latency by service — horizontal bar (orange)
+    pid = _create_ppl_explore_panel(
+        workspace_id, "pg-latency-by-svc", "Avg latency by service (ms)",
+        "source = `otel-v1-apm-span*` "
+        "| WHERE `attributes.db_system` = 'postgresql' OR `attributes.db_system_name` = 'postgresql' "
+        "| eval latency_ms = durationInNanos / 1000000 "
+        "| stats avg(latency_ms) as avg_ms by serviceName",
+        traces_pattern_id, "otel-v1-apm-span*", "endTime",
+        viz=_viz_bar({"x": "serviceName", "y": "avg_ms"}, color="#E7664C", horizontal=True))
+    if ok(pid): specs.append((pid, "explore", 16, 2, 16, 10))
+
+    # Slow queries — table
+    pid = _create_ppl_explore_panel(
+        workspace_id, "pg-slow-queries", "Slow queries (>50ms)",
+        "source = `otel-v1-apm-span*` "
+        "| WHERE (`attributes.db_system` = 'postgresql' OR `attributes.db_system_name` = 'postgresql') "
+        "AND `durationInNanos` > 50000000 "
+        "| sort - durationInNanos | head 20 "
+        "| fields serviceName, name, durationInNanos",
+        traces_pattern_id, "otel-v1-apm-span*", "endTime",
+        viz=_viz_table())
+    if ok(pid): specs.append((pid, "explore", 32, 2, 16, 10))
+
+    # Accounting writes — bar (blue)
+    pid = _create_ppl_explore_panel(
+        workspace_id, "pg-accounting-writes", "Accounting operations",
+        "source = `otel-v1-apm-span*` "
+        "| WHERE `attributes.db_system_name` = 'postgresql' AND serviceName = 'accounting' "
+        "| stats count() as operations by name",
+        traces_pattern_id, "otel-v1-apm-span*", "endTime",
+        viz=_viz_bar({"x": "name", "y": "operations"}, color="#6092C0"))
+    if ok(pid): specs.append((pid, "explore", 0, 12, 24, 10))
+
+    # Error spans — metric (red)
+    pid = _create_ppl_explore_panel(
+        workspace_id, "pg-error-spans", "Database error spans",
+        "source = `otel-v1-apm-span*` "
+        "| WHERE (`attributes.db_system` = 'postgresql' OR `attributes.db_system_name` = 'postgresql') "
+        "AND `status.code` = 2 "
+        "| stats count() as errors by span(endTime, 5m)",
+        traces_pattern_id, "otel-v1-apm-span*", "endTime",
+        viz=_viz_metric("errors", "span(endTime,5m)", color="#BD271E"))
+    if ok(pid): specs.append((pid, "explore", 24, 12, 24, 10))
+
+    # Error logs — metric (red)
+    pid = _create_ppl_explore_panel(
+        workspace_id, "pg-service-error-logs", "DB service error logs",
+        "source = `logs-otel-v1*` "
+        "| WHERE `resource.attributes.service.name` IN ('accounting', 'product-catalog', 'product-reviews') "
+        "AND severityText = 'ERROR' "
+        "| stats count() as errors by span(time, 5m)",
+        logs_pattern_id, "logs-otel-v1*", "time",
+        viz=_viz_metric("errors", "span(time,5m)", color="#BD271E"))
+    if ok(pid): specs.append((pid, "explore", 0, 22, 48, 10))
+
+    # Recent SQL queries — table showing db.statement
+    pid = _create_ppl_explore_panel(
+        workspace_id, "pg-recent-queries", "Recent SQL queries",
+        "source = `otel-v1-apm-span*` "
+        "| WHERE `attributes.db_system` = 'postgresql' OR `attributes.db_system_name` = 'postgresql' "
+        "| sort - endTime | head 50 "
+        "| fields endTime, serviceName, name, `attributes.db.statement`, durationInNanos, `status.code`",
+        traces_pattern_id, "otel-v1-apm-span*", "endTime",
+        viz=_viz_table())
+    if ok(pid): specs.append((pid, "explore", 0, 32, 48, 12))
+
+    # ── Section: Server Logs (filelog receiver → Data Prepper → OpenSearch) ──
+    vid = _create_markdown_vis(
+        workspace_id, "pg-srvlog-md", "pg-srvlog-md",
+        "#### Server logs — PostgreSQL log file")
+    if ok(vid):
+        specs.append((vid, "visualization", 0, 44, 48, 2))
+
+    pid = _create_ppl_explore_panel(
+        workspace_id, "pg-server-logs", "Recent server logs",
+        "source = `logs-otel-v1*` | WHERE `resource.attributes.service.name` = 'postgresql' "
+        "AND `attributes.log_source` = 'server' "
+        "| sort - time | head 50 "
+        "| fields time, body",
+        logs_pattern_id, "logs-otel-v1*", "time",
+        viz=_viz_table())
+    if ok(pid): specs.append((pid, "explore", 0, 46, 32, 12))
+
+    pid = _create_ppl_explore_panel(
+        workspace_id, "pg-server-log-count", "Server log volume",
+        "source = `logs-otel-v1*` | WHERE `resource.attributes.service.name` = 'postgresql' "
+        "AND `attributes.log_source` = 'server' "
+        "| stats count() as logs by span(time, 5m)",
+        logs_pattern_id, "logs-otel-v1*", "time",
+        viz=_viz_bar({"x": "span(time,5m)", "y": "logs"}, color="#9170B8"))
+    if ok(pid): specs.append((pid, "explore", 32, 46, 16, 12))
+
+    # ── Section: Server Telemetry (Prometheus metrics from postgresql receiver) ──
+    vid = _create_markdown_vis(
+        workspace_id, "pg-server-md", "pg-server-md",
+        "#### Server telemetry — PostgreSQL instance metrics")
+    if ok(vid):
+        specs.append((vid, "visualization", 0, 58, 48, 2))
+
+    y = 60
+    # (id, title, query, viz_dict)
+    prom_panels = [
+        ("pg-srv-backends", "Active backends",
+         "postgresql_backends", _viz_line(color="#00BD6B")),
+        ("pg-srv-max-conn", "Max connections",
+         "postgresql_connection_max", _viz_line(color="#6092C0")),
+        ("pg-srv-qps", "Queries / sec (commits + rollbacks)",
+         "rate(postgresql_commits_total[5m]) + rate(postgresql_rollbacks_total[5m])",
+         _viz_area(color="#9170B8")),
+        ("pg-srv-cache-hit", "Cache hit ratio",
+         "rate(postgresql_blks_hit_total[5m]) / (rate(postgresql_blks_hit_total[5m]) + rate(postgresql_blks_read_total[5m]))",
+         _viz_gauge("Value", color="#00BD6B")),
+        ("pg-srv-tup-fetched", "Tuples fetched / sec",
+         "rate(postgresql_tup_fetched_total[5m])", _viz_area(color="#6092C0")),
+        ("pg-srv-tup-inserted", "Tuples inserted / sec",
+         "rate(postgresql_tup_inserted_total[5m])", _viz_area(color="#D36086")),
+        ("pg-srv-deadlocks", "Deadlocks",
+         "postgresql_deadlocks_total", _viz_line(color="#BD271E")),
+        ("pg-srv-locks", "Active locks by type",
+         "postgresql_database_locks", _viz_line(color="#E7664C")),
+        ("pg-srv-db-size", "Database size (bytes)",
+         "postgresql_db_size_bytes", _viz_area(color="#9170B8")),
+        ("pg-srv-seq-scans", "Sequential scans / sec",
+         "rate(postgresql_sequential_scans_total[5m])", _viz_line(color="#F90")),
+        ("pg-srv-idx-scans", "Index scans / sec",
+         "rate(postgresql_index_scans_total[5m])", _viz_line(color="#00BD6B")),
+        ("pg-srv-bgwriter", "Bgwriter buffers / sec",
+         "rate(postgresql_bgwriter_buffers_allocated_total[5m])", _viz_area(color="#6092C0")),
+    ]
+    for i, (pid, title, query, viz) in enumerate(prom_panels):
+        col = (i % 3) * 16
+        row = y + (i // 3) * 10
+        rid = _create_promql_explore_panel(workspace_id, pid, title, query, viz=viz)
+        if ok(rid):
+            specs.append((rid, "explore", col, row, 16, 10))
+            print(f"  ✅ {title}")
+
+    if _assemble_dashboard(workspace_id, "postgresql-monitoring-dashboard",
+                           "PostgreSQL Monitoring",
+                           "Client traces & logs, server logs from filelog receiver, server metrics from postgresql receiver",
+                           specs):
+        print(f"✅ Created PostgreSQL Monitoring dashboard ({len(specs)} panels)")
+    else:
+        print("⚠️  PostgreSQL dashboard creation failed")
+
+
 def main():
     """Initialize OpenSearch Dashboards with workspace and datasources"""
     wait_for_dashboards()
@@ -1518,6 +2199,11 @@ def main():
     # Create datasources (must happen before ndjson import so Prometheus references resolve)
     prometheus_datasource_id = create_prometheus_datasource(workspace_id)
     create_opensearch_datasource(workspace_id)
+
+    # Create mixed-signal database monitoring dashboards (traces + logs + metrics)
+    if traces_pattern_id and logs_pattern_id:
+        create_valkey_dashboard(workspace_id, traces_pattern_id, logs_pattern_id)
+        create_postgresql_dashboard(workspace_id, traces_pattern_id, logs_pattern_id)
 
     # Import Astronomy Shop dashboard (ndjson export with all dependencies)
     import_ndjson_dashboard(workspace_id, "/config/dashboard-astronomy-shop.ndjson")
