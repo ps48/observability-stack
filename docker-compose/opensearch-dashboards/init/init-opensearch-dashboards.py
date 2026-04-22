@@ -336,32 +336,19 @@ def create_prometheus_datasource(workspace_id):
 
         if response.status_code == 200:
             print(f"✅ Created Prometheus datasource: {datasource_name}")
-
-            # Fetch the datasource ID from saved objects
-            datasource_id = get_existing_prometheus_datasource(datasource_name)
-            if datasource_id and workspace_id and workspace_id != "default":
-                associate_prometheus_with_workspace(workspace_id, datasource_id)
-
-            return datasource_name
-        elif response.status_code == 400:
-            # Check if error is due to duplicate
-            error_text = response.text
-            if "already exists with name" in error_text:
-                print(f"✅ Prometheus datasource already exists: {datasource_name}")
-                # Fetch the datasource ID and associate
-                datasource_id = get_existing_prometheus_datasource(datasource_name)
-                if datasource_id and workspace_id and workspace_id != "default":
-                    associate_prometheus_with_workspace(workspace_id, datasource_id)
-                return datasource_name
-            else:
-                print(f"⚠️  Prometheus datasource creation failed: {error_text}")
-                return None
+        elif response.status_code == 400 and "already exists with name" in response.text:
+            print(f"✅ Prometheus datasource already exists: {datasource_name}")
         else:
             print(f"⚠️  Prometheus datasource creation failed: {response.text}")
             return None
     except requests.exceptions.RequestException as e:
         print(f"⚠️  Error creating Prometheus datasource: {e}")
         return None
+
+    datasource_id = get_existing_prometheus_datasource(datasource_name)
+    if datasource_id and workspace_id and workspace_id != "default":
+        associate_prometheus_with_workspace(workspace_id, datasource_id)
+    return datasource_id
 
 
 def associate_prometheus_with_workspace(workspace_id, datasource_id):
@@ -570,13 +557,21 @@ def get_existing_correlation(workspace_id, correlation_type_prefix):
 
 
 def create_correlation(workspace_id, correlation_type, title, entities, references):
-    """Create a correlation saved object (idempotent)"""
-    # Determine prefix for existence check (APM-Config- or trace-to-logs-)
+    """Create or recreate a correlation saved object.
+
+    Always deletes and recreates so that references (index pattern IDs,
+    datasource IDs) stay in sync with the current run.
+    """
     prefix = correlation_type.split("-")[0] + "-" + correlation_type.split("-")[1] if "-" in correlation_type else correlation_type
     existing_id = get_existing_correlation(workspace_id, prefix)
     if existing_id:
-        print(f"✅ Correlation already exists ({prefix}*): {existing_id}")
-        return existing_id
+        w = f"/w/{workspace_id}" if workspace_id and workspace_id != "default" else ""
+        requests.delete(
+            f"{BASE_URL}{w}/api/saved_objects/correlations/{existing_id}",
+            auth=(USERNAME, PASSWORD), headers={"osd-xsrf": "true"},
+            verify=False, timeout=10,
+        )
+        print(f"🔄 Deleted stale correlation ({prefix}*): {existing_id}")
 
     print(f"🔗 Creating correlation: {title}...")
 
@@ -1444,6 +1439,11 @@ def import_ndjson_dashboard(workspace_id, ndjson_path):
         obj.pop("workspaces", None)
         # Remove version field that can cause conflicts on import
         obj.pop("version", None)
+        # Skip index-pattern objects — the init script manages these with
+        # workspace-aware dedup; ndjson exports have hardcoded IDs that
+        # create duplicates on every import
+        if obj.get("type") == "index-pattern":
+            continue
 
         if _has_virtual_reference(obj):
             direct_create.append(obj)
