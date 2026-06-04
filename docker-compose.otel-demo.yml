@@ -839,3 +839,19 @@ services:
     restart: "no"
     logging: *logging
 
+  # Override otel-collector to add db-monitoring receivers when otel-demo is active
+  otel-collector:
+    command: ["--config=/etc/otelcol-contrib/config.yaml", "--config=/etc/otelcol-db-monitoring.yml"]
+    volumes:
+      - ./docker-compose/otel-collector/config-db-monitoring.yaml:/etc/otelcol-db-monitoring.yml
+      - postgresql-logs:/var/log/postgresql:ro
+      - valkey-logs:/var/log/valkey:ro
+    environment:
+      - POSTGRES_MONITORING_PASSWORD=${POSTGRES_MONITORING_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+
+volumes:
+  postgresql-logs:
+    driver: local
+  valkey-logs:
+    driver: local

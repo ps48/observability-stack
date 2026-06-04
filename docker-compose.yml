@@ -28,10 +28,6 @@ volumes:
     driver: local
   alertmanager-data:
     driver: local
-  postgresql-logs:
-    driver: local
-  valkey-logs:
-    driver: local
 
 services:
   # OpenTelemetry Collector - Receives telemetry data via OTLP protocol
@@ -39,11 +35,8 @@ services:
     image: otel/opentelemetry-collector-contrib:${OTEL_COLLECTOR_VERSION}
     container_name: otel-collector
     pull_policy: always
-    command: ["--config=/etc/otelcol-config.yml"]
     volumes:
-      - ./docker-compose/otel-collector/config.yaml:/etc/otelcol-config.yml
-      - postgresql-logs:/var/log/postgresql:ro
-      - valkey-logs:/var/log/valkey:ro
+      - ./docker-compose/otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml
     ports:
       # OTLP gRPC receiver - high-performance binary protocol
       - "${OTEL_COLLECTOR_PORT_GRPC}:4317"
@@ -64,8 +57,6 @@ services:
       - OTEL_COLLECTOR_PORT_HTTP=${OTEL_COLLECTOR_PORT_HTTP}
       - OPENSEARCH_HOST=${OPENSEARCH_HOST}
       - OPENSEARCH_PORT=${OPENSEARCH_PORT}
-      - POSTGRES_MONITORING_PASSWORD=${POSTGRES_MONITORING_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
       - GOMEMLIMIT=160MiB
     depends_on:
       opensearch:
