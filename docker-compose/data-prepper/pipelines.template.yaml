@@ -152,6 +152,11 @@ genai-evaluation-pipeline:
           - key: "/attributes/derived.evaluation.target_trace_id"
             value_expression: "/attributes/opensearch.evaluation.trace_id"
             add_when: "/attributes/derived.evaluation.target_trace_id == null and /attributes/opensearch.evaluation.trace_id != null"
+    # Deterministic id: retries and re-imports of the same result do not duplicate it.
+    - add_entries:
+        entries:
+          - key: "/evaluationId"
+            format: "${/time}|${/traceId}|${/spanId}|${/attributes/derived.session.id}|${/attributes/gen_ai.evaluation.name}|${/instrumentationScope/name}"
   sink:
     - opensearch:
         hosts: ["OPENSEARCH_PROTOCOL://OPENSEARCH_HOST:OPENSEARCH_PORT"]
@@ -159,6 +164,7 @@ genai-evaluation-pipeline:
         password: OPENSEARCH_PASSWORD
         insecure: true
         index: "otel-v1-genai-evaluation-%{yyyy.MM.dd}"
+        document_id: "${/evaluationId}"
         template_type: index-template
         template_file: /usr/share/data-prepper/templates/genai-evaluation-index-template.json
 
@@ -192,6 +198,8 @@ genai-evaluation-span-pipeline:
             value: "opensearch-sdk"
           - key: "/attributes/derived.evaluation.target_trace_id"
             value_expression: "/traceId"
+          - key: "/evaluationId"
+            format: "span|${/attributes/opensearch.evaluation.carrier_span_id}"
           - key: "/attributes/derived.session.id"
             value_expression: "/attributes/gen_ai.conversation.id"
             add_when: "/attributes/gen_ai.conversation.id != null"
@@ -206,6 +214,7 @@ genai-evaluation-span-pipeline:
         password: OPENSEARCH_PASSWORD
         insecure: true
         index: "otel-v1-genai-evaluation-%{yyyy.MM.dd}"
+        document_id: "${/evaluationId}"
         template_type: index-template
         template_file: /usr/share/data-prepper/templates/genai-evaluation-index-template.json
 
