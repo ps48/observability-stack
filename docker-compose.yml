@@ -90,6 +90,7 @@ services:
     volumes:
       - ./docker-compose/data-prepper/pipelines.template.yaml:/tmp/pipelines.template.yaml
       - ./docker-compose/data-prepper/data-prepper-config.yaml:/usr/share/data-prepper/config/data-prepper-config.yaml
+      - ./docker-compose/data-prepper/genai-evaluation-index-template.json:/usr/share/data-prepper/templates/genai-evaluation-index-template.json
     ports:
       # OTLP gRPC receiver from OpenTelemetry Collector
       - "${DATA_PREPPER_OTLP_PORT}:21890"
