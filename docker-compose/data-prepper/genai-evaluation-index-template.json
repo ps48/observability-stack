@@ -179,6 +179,59 @@
                       }
                     }
                   }
+                },
+                "test_case": {
+                  "properties": {
+                    "input": {
+                      "type": "text",
+                      "fields": {
+                        "keyword": {
+                          "type": "keyword",
+                          "ignore_above": 256
+                        }
+                      }
+                    },
+                    "expected": {
+                      "type": "text",
+                      "fields": {
+                        "keyword": {
+                          "type": "keyword",
+                          "ignore_above": 256
+                        }
+                      }
+                    },
+                    "output": {
+                      "type": "text",
+                      "fields": {
+                        "keyword": {
+                          "type": "keyword",
+                          "ignore_above": 256
+                        }
+                      }
+                    },
+                    "duration_ms": {
+                      "type": "double"
+                    }
+                  }
+                },
+                "test_suite_run": {
+                  "properties": {
+                    "case_count": {
+                      "type": "long"
+                    },
+                    "pass_count": {
+                      "type": "long"
+                    },
+                    "fail_count": {
+                      "type": "long"
+                    },
+                    "error_count": {
+                      "type": "long"
+                    },
+                    "duration_ms": {
+                      "type": "double"
+                    }
+                  }
                 }
               }
             },
