@@ -40,6 +40,16 @@
               "ignore_above": 256
             }
           }
+        },
+        {
+          "string_scope_attributes": {
+            "path_match": "instrumentationScope.attributes.*",
+            "match_mapping_type": "string",
+            "mapping": {
+              "type": "keyword",
+              "ignore_above": 256
+            }
+          }
         }
       ],
       "properties": {

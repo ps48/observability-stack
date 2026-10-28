@@ -83,13 +83,7 @@ traces-raw-pipeline:
   processor:
     # Process raw trace data for OpenSearch storage
     - otel_traces:
-  route:
-    # Deprecated SDK carrier: scores sent as "evaluation <name>" spans.
-    - evaluation_spans: '/attributes/gen_ai.operation.name == "evaluation" and /attributes/gen_ai.evaluation.name != null'
   sink:
-    - pipeline:
-        name: "genai-evaluation-span-pipeline"
-        routes: [evaluation_spans]
     - opensearch:
         hosts: ["OPENSEARCH_PROTOCOL://OPENSEARCH_HOST:OPENSEARCH_PORT"]
         username: OPENSEARCH_USER
@@ -98,10 +92,11 @@ traces-raw-pipeline:
         # Use trace analytics index type for automatic index management
         index_type: trace-analytics-plain-raw
 
-# GenAI evaluation results (gen_ai.evaluation.result log events) from the OTLP
-# logs path, plus scores from the deprecated span carrier. One document per
-# result in otel-v1-genai-evaluation-*, keyed to the evaluated span by
-# traceId/spanId. Data Prepper adds normalized fields under attributes.derived.*
+# GenAI evaluation results (gen_ai.evaluation.result) and offline evaluation run
+# records (opensearch.test_case.result, opensearch.test_suite_run.result), all
+# OTel log events from the OTLP logs path. One document per event in
+# otel-v1-genai-evaluation-*, linked to the evaluated span by traceId/spanId.
+# Data Prepper adds normalized fields under attributes.derived.*
 genai-evaluation-pipeline:
   workers: 2
   delay: 10
@@ -132,15 +127,17 @@ genai-evaluation-pipeline:
         with_keys: ["/attributes/derived.evaluation.level"]
     - add_entries:
         entries:
+          # Source from the instrumentation scope: AgentCore's scope, or the scope attribute
+          # every OpenSearch GenAI SDK logger carries; anything else is a generic OTel evaluator.
           - key: "/attributes/derived.evaluation.source"
             value: "agentcore"
-            add_when: "/attributes/aws.bedrock_agentcore.evaluation_level != null"
+            add_when: '/eventName == "gen_ai.evaluation.result" and (startsWith(/instrumentationScope/name, "aws.bedrock_agentcore") or /attributes/aws.bedrock_agentcore.evaluation_level != null)'
           - key: "/attributes/derived.evaluation.source"
             value: "opensearch-sdk"
-            add_when: "/attributes/derived.evaluation.source == null and (/attributes/opensearch.evaluation.level != null or /attributes/opensearch.evaluation.evaluator.type != null)"
+            add_when: '/eventName == "gen_ai.evaluation.result" and /attributes/derived.evaluation.source == null and /instrumentationScope/attributes/opensearch.genai.sdk.name != null'
           - key: "/attributes/derived.evaluation.source"
             value: "otel"
-            add_when: "/eventName == \"gen_ai.evaluation.result\" and /attributes/derived.evaluation.source == null"
+            add_when: '/eventName == "gen_ai.evaluation.result" and /attributes/derived.evaluation.source == null'
           - key: "/attributes/derived.session.id"
             value_expression: "/attributes/gen_ai.conversation.id"
             add_when: "/attributes/gen_ai.conversation.id != null"
@@ -158,56 +155,6 @@ genai-evaluation-pipeline:
         entries:
           - key: "/evaluationId"
             format: "${/eventName}|${/time}|${/traceId}|${/spanId}|${/attributes/derived.session.id}|${/attributes/gen_ai.evaluation.name}|${/attributes/test.case.id}|${/instrumentationScope/name}"
-  sink:
-    - opensearch:
-        hosts: ["OPENSEARCH_PROTOCOL://OPENSEARCH_HOST:OPENSEARCH_PORT"]
-        username: OPENSEARCH_USER
-        password: OPENSEARCH_PASSWORD
-        insecure: true
-        index: "otel-v1-genai-evaluation-%{yyyy.MM.dd}"
-        document_id: "${/evaluationId}"
-        template_type: index-template
-        template_file: /usr/share/data-prepper/templates/genai-evaluation-index-template.json
-
-# Deprecated SDK span carrier: reshape each "evaluation <name>" span into the
-# same log-record shape (the evaluated span is the score span's parent).
-genai-evaluation-span-pipeline:
-  source:
-    pipeline:
-      name: "traces-raw-pipeline"
-  processor:
-    - copy_values:
-        entries:
-          - from_key: "/spanId"
-            to_key: "/attributes/opensearch.evaluation.carrier_span_id"
-          - from_key: "/parentSpanId"
-            to_key: "/spanId"
-            overwrite_if_to_key_exists: true
-          - from_key: "/endTime"
-            to_key: "/time"
-          - from_key: "/endTime"
-            to_key: "/@timestamp"
-    - add_entries:
-        entries:
-          - key: "/eventName"
-            value: "gen_ai.evaluation.result"
-          - key: "/severityNumber"
-            value: 9
-          - key: "/attributes/derived.evaluation.level"
-            value: "span"
-          - key: "/attributes/derived.evaluation.source"
-            value: "opensearch-sdk"
-          - key: "/attributes/derived.evaluation.target_trace_id"
-            value_expression: "/traceId"
-          - key: "/evaluationId"
-            format: "span|${/attributes/opensearch.evaluation.carrier_span_id}"
-          - key: "/attributes/derived.session.id"
-            value_expression: "/attributes/gen_ai.conversation.id"
-            add_when: "/attributes/gen_ai.conversation.id != null"
-    - delete_entries:
-        with_keys: ["parentSpanId", "startTime", "endTime", "durationInNanos", "kind", "name", "status", "events", "links",
-                    "traceState", "traceGroup", "traceGroupFields", "droppedEventsCount", "droppedLinksCount",
-                    "/attributes/gen_ai.operation.name"]
   sink:
     - opensearch:
         hosts: ["OPENSEARCH_PROTOCOL://OPENSEARCH_HOST:OPENSEARCH_PORT"]
