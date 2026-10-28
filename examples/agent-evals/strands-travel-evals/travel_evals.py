@@ -7,6 +7,10 @@
 
 Every result is a gen_ai.evaluation.result log event sent with the OpenSearch GenAI SDK;
 Data Prepper routes the events to otel-v1-genai-evaluation-*.
+
+Every check declares its verdict rule, so the UI shows pass/fail (not a neutral "Scored"):
+tool_selection and handles_missing_data give an explicit assessment, answer_quality and
+session_goal_success pass at 4 or more on a 1-5 scale, latency_budget passes at 12 s or less.
 """
 
 from __future__ import annotations
@@ -23,10 +27,21 @@ from opentelemetry import trace
 from strands import Agent, tool
 from strands.models.bedrock import BedrockModel
 
-from opensearch_genai_observability_sdk_py import EvalScore, Op, enrich, evaluate, observe, register, score
+from opensearch_genai_observability_sdk_py import (
+    EvalScore,
+    Op,
+    enrich,
+    evaluate,
+    observe,
+    register,
+    score,
+    scorer,
+)
 
 MODEL_ID = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
 JUDGE_ID = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+QUALITY_THRESHOLD = 4  # 1-5 judge scale: pass at 4 or more
+LATENCY_BUDGET_S = 12  # pass at 12 s or less
 
 CITIES = {"paris": ("EUR", 18), "tokyo": ("JPY", 22), "london": ("GBP", 14),
           "new york": ("USD", 20), "sydney": ("AUD", 25), "seattle": ("USD", 12)}
@@ -154,11 +169,7 @@ def judge(question: str, answer: str, expected: str | None = None, tool_results:
     return EvalScore(
         name="answer_quality", value=float(data["score"]), label=data.get("label"),
         explanation=data.get("reason"),
-        metadata={"opensearch.evaluation.evaluator.type": "llm_judge",
-                  "opensearch.evaluation.evaluator.name": "travel_quality_judge",
-                  "opensearch.evaluation.score.min": 1.0, "opensearch.evaluation.score.max": 5.0,
-                  "opensearch.evaluation.score.direction": "maximize",
-                  "opensearch.evaluation.judge.latency_ms": round((time.time() - started) * 1000)},
+        metadata={"opensearch.evaluation.judge.latency_ms": round((time.time() - started) * 1000)},
     )
 
 
@@ -181,28 +192,35 @@ def run_experiment(version: str) -> None:
         agent_holder["agent"] = agent
         return str(result)
 
+    # Explicit verdict: pass only when every expected tool was called.
+    @scorer(name="tool_selection", score_min=0, score_max=1,
+            evaluator="tool_selection_check", evaluator_type="code")
     def tool_selection(input: str, output: str, expected: str) -> EvalScore:
         want, got = set(EXPECTED_TOOLS[input]), set(LAST_TOOLS.get(input, []))
         hit = len(want & got) / len(want)
         missing = sorted(want - got)
         return EvalScore(
             name="tool_selection", value=hit, label="pass" if hit == 1 else "fail",
+            assessment="pass" if hit == 1 else "fail",
             explanation=(f"Called {sorted(got) or 'no tools'}; expected {sorted(want)}."
                          + (f" Missing {missing}." if missing else "")),
-            metadata={"opensearch.evaluation.evaluator.type": "code",
-                      "opensearch.evaluation.evaluator.name": "tool_selection_check"},
         )
 
+    # Lower is better: pass at LATENCY_BUDGET_S or less (assessment computed by the SDK).
+    @scorer(name="latency_budget", direction="minimize", threshold=LATENCY_BUDGET_S,
+            score_min=0, score_max=2 * LATENCY_BUDGET_S, evaluator_type="code")
     def latency_budget(input: str, output: str, expected: str) -> EvalScore:
         seconds = LAST_LATENCY.get(input, 0.0)
         return EvalScore(
-            name="latency_budget", value=round(seconds, 2), label="pass" if seconds <= 12 else "fail",
-            explanation=f"{seconds:.1f}s against a 12s budget.",
-            metadata={"opensearch.evaluation.evaluator.type": "code",
-                      "opensearch.evaluation.score.direction": "minimize",
-                      "opensearch.evaluation.score.min": 0.0, "opensearch.evaluation.score.max": 24.0},
+            name="latency_budget", value=round(seconds, 2),
+            label="pass" if seconds <= LATENCY_BUDGET_S else "fail",
+            explanation=f"{seconds:.1f}s against a {LATENCY_BUDGET_S}s budget.",
         )
 
+    # 1-5 LLM judge: pass at QUALITY_THRESHOLD or more. If the judge call raises, the error
+    # grade is recorded as answer_quality (the declared name), not as "quality".
+    @scorer(name="answer_quality", threshold=QUALITY_THRESHOLD, score_min=1, score_max=5,
+            evaluator="travel_quality_judge", evaluator_type="llm_judge")
     def quality(input: str, output: str, expected: str) -> EvalScore:
         return judge(input, output, expected, LAST_RESULTS.get(input, []))
 
@@ -247,11 +265,14 @@ def run_online(n: int, version: str) -> None:
                 score(name=j.name, value=j.value, label=j.label, explanation=j.explanation,
                       evaluator="travel_quality_judge", evaluator_type="llm_judge",
                       score_min=1.0, score_max=5.0, direction="maximize",
+                      threshold=QUALITY_THRESHOLD,
                       conversation_id=session_id, agent_name="travel_planner")
                 refusal = any(w in answer.lower() for w in ("no flights", "no result", "couldn't find",
                                                             "could not find", "doesn't exist", "not a real"))
-                score(name="handles_missing_data", value=1.0 if refusal or "atlantis" not in message.lower() else 0.0,
-                      label="pass" if refusal or "atlantis" not in message.lower() else "fail",
+                handled = refusal or "atlantis" not in message.lower()
+                score(name="handles_missing_data", value=1.0 if handled else 0.0,
+                      label="pass" if handled else "fail", assessment="pass" if handled else "fail",
+                      score_min=0.0, score_max=1.0,
                       explanation="Unknown destinations must be reported, not invented.",
                       evaluator="missing_data_check", evaluator_type="code",
                       conversation_id=session_id, agent_name="travel_planner")
@@ -264,7 +285,8 @@ def run_online(n: int, version: str) -> None:
                   tool_results=session_tools)
         score(name="session_goal_success", value=j.value, label=j.label, explanation=j.explanation,
               level="session", conversation_id=session_id, evaluator="travel_session_judge",
-              evaluator_type="llm_judge", score_min=1.0, score_max=5.0, agent_name="travel_planner")
+              evaluator_type="llm_judge", score_min=1.0, score_max=5.0, direction="maximize",
+              threshold=QUALITY_THRESHOLD, agent_name="travel_planner")
         print("session", session_id, "done")
 
 

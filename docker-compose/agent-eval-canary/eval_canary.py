@@ -59,14 +59,31 @@ def setup_otel() -> LoggerProvider:
     return provider
 
 
-def score(name, value, trace_id, span_id, label=None, explanation=None):
-    """Emit one gen_ai.evaluation.result event parented to the judged span."""
+def score(name, value, trace_id, span_id, label=None, explanation=None,
+          threshold=None, direction="maximize", assessment=None):
+    """Emit one gen_ai.evaluation.result event parented to the judged span.
+
+    Each check declares its verdict rule so readers show pass/fail instead of a
+    neutral "Scored": an explicit ``assessment`` ("pass" / "fail"), or a
+    ``threshold`` + ``direction`` from which the assessment is also computed
+    (the same rule as the SDK's score()). All checks are on a 0..1 scale.
+    """
     attrs = {
         "gen_ai.evaluation.name": name,
         "gen_ai.evaluation.score.value": float(value),
         "opensearch.evaluation.evaluator.type": "code",
         "opensearch.evaluation.level": "span",
+        "opensearch.evaluation.score.min": 0.0,
+        "opensearch.evaluation.score.max": 1.0,
+        "opensearch.evaluation.score.direction": direction,
     }
+    if threshold is not None:
+        attrs["opensearch.evaluation.score.threshold"] = float(threshold)
+        if assessment is None:
+            ok = value >= threshold if direction == "maximize" else value <= threshold
+            assessment = "pass" if ok else "fail"
+    if assessment is not None:
+        attrs["opensearch.evaluation.assessment"] = assessment
     if label:
         attrs["gen_ai.evaluation.score.label"] = label
     if explanation:
@@ -137,6 +154,7 @@ def deterministic_eval(retriever: OpenSearchTraceRetriever, trace_id: str, span_
         trace_id=trace_id,
         span_id=span_id,
         label=coverage_label,
+        threshold=0.67,  # pass at "Full" coverage
         explanation=(
             f"input={'yes' if has_input else 'no'}, "
             f"output={'yes' if has_output else 'no'}, "
@@ -152,6 +170,7 @@ def deterministic_eval(retriever: OpenSearchTraceRetriever, trace_id: str, span_
         trace_id=trace_id,
         span_id=span_id,
         label="No errors" if not has_error else "Has errors",
+        assessment="fail" if has_error else "pass",
         explanation="at least one span has status.code=ERROR" if has_error else "all spans OK",
     )
 
@@ -176,6 +195,7 @@ def deterministic_eval(retriever: OpenSearchTraceRetriever, trace_id: str, span_
         trace_id=trace_id,
         span_id=span_id,
         label=tcsr_label,
+        threshold=0.5,  # fail when most tool calls came back empty
         explanation=tcsr_expl,
     )
 
@@ -200,6 +220,7 @@ def deterministic_eval(retriever: OpenSearchTraceRetriever, trace_id: str, span_
         trace_id=trace_id,
         span_id=span_id,
         label=td_label,
+        threshold=0.34,  # fail when looping on one tool
         explanation=td_expl,
     )
 

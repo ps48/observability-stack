@@ -157,10 +157,16 @@
                         "max": {
                           "type": "double"
                         },
+                        "threshold": {
+                          "type": "double"
+                        },
                         "direction": {
                           "type": "keyword"
                         }
                       }
+                    },
+                    "assessment": {
+                      "type": "keyword"
                     },
                     "evaluator": {
                       "properties": {

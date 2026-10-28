@@ -6,14 +6,14 @@ Included by default with the example services (`docker-compose.examples.yml`).
 
 ## Evaluation Signals
 
-Emits **4 evaluation spans** per trace:
+Emits **4 `gen_ai.evaluation.result` events** per trace. Each declares its verdict rule (`opensearch.evaluation.assessment`, or `opensearch.evaluation.score.threshold` + `.direction` with the computed assessment), so OpenSearch Dashboards shows pass/fail rather than a neutral "Scored":
 
-| Eval Name | What it measures | Value |
-|---|---|---|
-| `span_coverage` | Instrumentation health — input, output, and tool spans present | 0.0 / 0.33 / 0.67 / 1.0 |
-| `error_free` | No span in the trace has `status.code=ERROR` | 0 or 1 |
-| `tool_call_success_rate` | Fraction of tool calls that returned non-empty results | 0.0–1.0 |
-| `tool_diversity` | Unique tools / total tool calls (catches looping) | 0.0–1.0 |
+| Eval Name | What it measures | Value | Pass rule |
+|---|---|---|---|
+| `span_coverage` | Instrumentation health — input, output, and tool spans present | 0.0 / 0.33 / 0.67 / 1.0 | `>= 0.67` |
+| `error_free` | No span in the trace has `status.code=ERROR` | 0 or 1 | explicit assessment |
+| `tool_call_success_rate` | Fraction of tool calls that returned non-empty results | 0.0–1.0 | `>= 0.5` |
+| `tool_diversity` | Unique tools / total tool calls (catches looping) | 0.0–1.0 | `>= 0.34` |
 
 ## Configuration
 
@@ -26,26 +26,8 @@ Emits **4 evaluation spans** per trace:
 
 Both canaries can run simultaneously without duplicating scores. Each deduplicates by its own evaluation name — this canary checks for existing `span_coverage` scores, the LLM canary checks for `helpfulness`. Neither blocks the other.
 
-A trace scored by both gets **5 evaluation spans**:
-
-```
-invoke_agent Events Agent
-├── evaluation span_coverage            (deterministic)
-├── evaluation error_free               (deterministic)
-├── evaluation tool_call_success_rate   (deterministic)
-├── evaluation tool_diversity           (deterministic)
-└── evaluation helpfulness              (LLM-as-judge)
-```
+A trace scored by both gets **5 evaluation results**: `span_coverage`, `error_free`, `tool_call_success_rate`, `tool_diversity` (deterministic) and `helpfulness` (LLM-as-judge).
 
 ## OTel Compliance
 
-All evaluation spans follow [OTel GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-events/):
-
-- `gen_ai.operation.name = "evaluation"`
-- `gen_ai.evaluation.name` — the eval name
-- `gen_ai.evaluation.score.value` — numeric score
-- `gen_ai.evaluation.score.label` — human-readable label
-- `gen_ai.evaluation.explanation` — reasoning or details
-- `gen_ai.evaluation.result` event emitted per span
-
-Score spans attach as children of the evaluated agent's `invoke_agent` span, so they appear in the same trace waterfall in OpenSearch Dashboards.
+Each result is an OTel log event `gen_ai.evaluation.result` ([OTel GenAI events](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-events/)) parented to the evaluated agent span (its `traceId` / `spanId`), with `gen_ai.evaluation.name`, `.score.value`, `.score.label`, `.explanation`, plus `opensearch.evaluation.*` extensions (level, evaluator type, scale, direction, threshold, assessment). Data Prepper routes the events to `otel-v1-genai-evaluation-*`.

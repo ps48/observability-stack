@@ -10,6 +10,8 @@ where Agent Traces > Evaluations shows them next to the agent's traces.
 | `experiment --version v1\|v2` | One evaluation run (`test.suite.run.id`) over 8 golden test cases: `tool_selection` (code), `answer_quality` (LLM judge, 1 to 5, sees the tool results) and `latency_budget` (code, lower is better). Run v1 and v2 and compare them in Evaluation runs. Each test case is the agent's own trace (its root span carries `test.suite.run.id` and `test.case.id`), plus one `opensearch.test_case.result` log event per case and one `opensearch.test_suite_run.result` event per run. No harness spans. |
 | `online --sessions N` | Multi-turn sessions with a per-turn `answer_quality` judge and a `handles_missing_data` check parented to each agent run, and one `session_goal_success` result per session. |
 
+Every check declares its verdict rule (the SDK's `@scorer(...)` / `score(assessment=, threshold=)`), so the UI shows pass/fail instead of a neutral "Scored": `tool_selection` and `handles_missing_data` give an explicit `assessment`, `answer_quality` and `session_goal_success` pass at 4 or more (1 to 5), `latency_budget` passes at 12 s or less (`direction=minimize`). A case fails when any of its checks fails.
+
 ## Run
 
 Requires the stack (`docker compose up -d`), AWS credentials with `bedrock:InvokeModel` /
