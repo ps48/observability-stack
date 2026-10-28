@@ -2,8 +2,9 @@ from datetime import datetime, timedelta, timezone
 """Agent eval canary — periodically scores un-evaluated agent traces.
 
 Polls OpenSearch for recent agent traces, skips any that already have
-an evaluation span, and writes deterministic score spans back via the
-genai-observability-sdk score() API.
+this canary's grades, and writes deterministic grades back as OpenTelemetry
+gen_ai.evaluation.result log events, parented to the judged agent span.
+Data Prepper routes the events to otel-v1-genai-evaluation-*.
 """
 
 import logging
@@ -11,13 +12,14 @@ import os
 import time
 
 from opensearch_genai_observability_sdk_py.retrieval import OpenSearchTraceRetriever
-from opensearch_genai_observability_sdk_py.score import score
 
 from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry._logs import SeverityNumber
+from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+from opentelemetry.sdk._logs import LoggerProvider
+from opentelemetry.sdk._logs.export import SimpleLogRecordProcessor
 from opentelemetry.sdk.resources import Resource
+from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 log = logging.getLogger("agent-eval-canary")
@@ -41,14 +43,44 @@ TARGET_SERVICES = [
 ]
 
 
-def setup_otel() -> TracerProvider:
+EVAL_INDEX = os.environ.get("EVAL_INDEX", "otel-v1-genai-evaluation-*")
+_logger = None
+
+
+def setup_otel() -> LoggerProvider:
     resource = Resource.create({"service.name": "agent-eval-canary"})
-    provider = TracerProvider(resource=resource)
-    provider.add_span_processor(
-        SimpleSpanProcessor(OTLPSpanExporter(endpoint=OTEL_ENDPOINT, insecure=True))
+    provider = LoggerProvider(resource=resource)
+    provider.add_log_record_processor(
+        SimpleLogRecordProcessor(OTLPLogExporter(endpoint=OTEL_ENDPOINT, insecure=True))
     )
-    trace.set_tracer_provider(provider)
+    global _logger
+    # Instrumentation scope = evaluator identity (OTel GenAI semantic conventions).
+    _logger = provider.get_logger("agent-eval-canary", "0.2.0")
     return provider
+
+
+def score(name, value, trace_id, span_id, label=None, explanation=None):
+    """Emit one gen_ai.evaluation.result event parented to the judged span."""
+    attrs = {
+        "gen_ai.evaluation.name": name,
+        "gen_ai.evaluation.score.value": float(value),
+        "opensearch.evaluation.evaluator.type": "code",
+        "opensearch.evaluation.level": "span",
+    }
+    if label:
+        attrs["gen_ai.evaluation.score.label"] = label
+    if explanation:
+        attrs["gen_ai.evaluation.explanation"] = explanation
+    ctx = trace.set_span_in_context(NonRecordingSpan(SpanContext(
+        int(trace_id, 16), int(span_id, 16), is_remote=True,
+        trace_flags=TraceFlags(TraceFlags.SAMPLED))))
+    _logger.emit(
+        event_name="gen_ai.evaluation.result",
+        timestamp=time.time_ns(),
+        severity_number=SeverityNumber.INFO,
+        attributes=attrs,
+        context=ctx,
+    )
 
 
 def deterministic_eval(retriever: OpenSearchTraceRetriever, trace_id: str, span_id: str) -> None:
@@ -180,11 +212,10 @@ def deterministic_eval(retriever: OpenSearchTraceRetriever, trace_id: str, span_
 def _find_scored_by_name(
     retriever: OpenSearchTraceRetriever, trace_ids: list[str], eval_name: str
 ) -> set[str]:
-    """Return subset of trace_ids that already have a score span for eval_name.
+    """Return the subset of trace_ids that already have this canary's grade eval_name.
 
-    Needed because find_evaluated_trace_ids matches any evaluation span, which
-    would cause this deterministic canary to skip traces already scored by
-    other canaries (e.g. LLM-as-judge).
+    Scoped to one grade name so other evaluators (an LLM judge, AgentCore) do not
+    make this canary skip a trace.
     """
     if not trace_ids:
         return set()
@@ -194,14 +225,16 @@ def _find_scored_by_name(
             "bool": {
                 "must": [
                     {"terms": {"traceId": trace_ids}},
-                    {"term": {"attributes.gen_ai.operation.name": "evaluation"}},
+                    {"term": {"eventName": "gen_ai.evaluation.result"}},
                     {"term": {"attributes.gen_ai.evaluation.name": eval_name}},
                 ]
             }
         },
         "aggs": {"scored": {"terms": {"field": "traceId", "size": len(trace_ids)}}},
     }
-    resp = retriever._client.search(index=retriever._index, body=body)
+    resp = retriever._client.search(
+        index=EVAL_INDEX, body=body, params={"ignore_unavailable": "true"}
+    )
     return {
         b["key"]
         for b in resp.get("aggregations", {}).get("scored", {}).get("buckets", [])
