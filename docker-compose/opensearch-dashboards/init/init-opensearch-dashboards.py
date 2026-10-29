@@ -905,10 +905,16 @@ def get_existing_correlation(workspace_id, correlation_type_prefix):
         return None
 
 
-def create_correlation(workspace_id, correlation_type, title, entities, references):
-    """Create a correlation saved object (idempotent)"""
-    # Determine prefix for existence check (APM-Config- or trace-to-logs-)
-    prefix = correlation_type.split("-")[0] + "-" + correlation_type.split("-")[1] if "-" in correlation_type else correlation_type
+def create_correlation(workspace_id, correlation_type, title, entities, references, prefix=None):
+    """Create a correlation saved object (idempotent)
+
+    `prefix` is the correlationType prefix that marks an existing correlation of the same
+    kind. By default it is the first two dash-separated words of the type ("APM-Config",
+    "trace-to"); pass it explicitly when two kinds share those words (trace-to-logs-* and
+    trace-to-evaluations-* both start with "trace-to").
+    """
+    if prefix is None:
+        prefix = correlation_type.split("-")[0] + "-" + correlation_type.split("-")[1] if "-" in correlation_type else correlation_type
     existing_id = get_existing_correlation(workspace_id, prefix)
     if existing_id:
         print(f"✅ Correlation already exists ({prefix}*): {existing_id}")
@@ -959,6 +965,7 @@ def create_trace_to_logs_correlation(workspace_id, traces_pattern_id, logs_patte
     """Create trace-to-logs correlation for cross-signal navigation"""
     return create_correlation(
         workspace_id,
+        prefix="trace-to-logs-",
         correlation_type=f"trace-to-logs-otel-v1-apm-span*",
         title="trace-to-logs_otel-v1-apm-span*",
         entities=[
@@ -968,6 +975,31 @@ def create_trace_to_logs_correlation(workspace_id, traces_pattern_id, logs_patte
         references=[
             {"name": "entities[0].index", "type": "index-pattern", "id": traces_pattern_id},
             {"name": "entities[1].index", "type": "index-pattern", "id": logs_pattern_id},
+        ],
+    )
+
+
+def create_trace_to_evaluations_correlation(workspace_id, traces_pattern_id, evaluations_pattern_id):
+    """Create the trace-to-evaluations correlation read by Agent Traces > Evaluations.
+
+    Links the traces dataset to the evaluations dataset (a logs dataset over the
+    gen_ai.evaluation.result / test case / test suite run events). The Agent Evaluations
+    page reads its index from this correlation, and the trace details flyout lists a
+    trace's evaluation events next to its correlated logs. Same shape as trace-to-logs,
+    with an `evaluationsDataset` entity in place of `logsDataset`.
+    """
+    return create_correlation(
+        workspace_id,
+        prefix="trace-to-evaluations-",
+        correlation_type="trace-to-evaluations-otel-v1-apm-span*",
+        title="trace-to-evaluations_otel-v1-apm-span*",
+        entities=[
+            {"tracesDataset": {"id": "references[0].id"}},
+            {"evaluationsDataset": {"id": "references[1].id"}},
+        ],
+        references=[
+            {"name": "entities[0].index", "type": "index-pattern", "id": traces_pattern_id},
+            {"name": "entities[1].index", "type": "index-pattern", "id": evaluations_pattern_id},
         ],
     )
 
@@ -1888,8 +1920,16 @@ def main():
     service_map_pattern_id = create_index_pattern(
         workspace_id, "otel-v2-apm-service-map*", "timestamp"
     )
+    # Agent evaluation events (gen_ai.evaluation.result, opensearch.test_case.result,
+    # opensearch.test_suite_run.result), routed by Data Prepper to otel-v1-genai-evaluation-*.
+    # A logs dataset, so Explore Logs queries it with PPL and the trace flyout correlates it.
+    evaluations_schema_mappings = '{"otelLogs":{"timestamp":"time","traceId":"traceId","spanId":"spanId","serviceName":"serviceName"}}'
+    evaluations_pattern_id = create_index_pattern(
+        workspace_id, "otel-v1-genai-evaluation*", "time", "logs", evaluations_schema_mappings,
+        display_name="Evaluation Dataset - Local Cluster"
+    )
 
-    print("📊 Created index patterns for spans, logs, and service map")
+    print("📊 Created index patterns for spans, logs, service map and evaluations")
 
     # Warm the field list immediately after creation. Patterns created via the
     # raw saved-objects API land with an empty `fields` attribute (OSD only
@@ -1904,6 +1944,7 @@ def main():
         (logs_pattern_id, "logs-otel-v1*"),
         (traces_pattern_id, "otel-v1-apm-span*"),
         (service_map_pattern_id, "otel-v2-apm-service-map*"),
+        (evaluations_pattern_id, "otel-v1-genai-evaluation*"),
     ):
         refresh_index_pattern_fields(workspace_id, pid, title)
 
@@ -1914,6 +1955,12 @@ def main():
     # Create trace-to-logs correlation for cross-signal navigation
     if traces_pattern_id and logs_pattern_id:
         create_trace_to_logs_correlation(workspace_id, traces_pattern_id, logs_pattern_id)
+
+    # Create trace-to-evaluations correlation (Agent Traces > Evaluations reads its dataset)
+    if traces_pattern_id and evaluations_pattern_id:
+        create_trace_to_evaluations_correlation(
+            workspace_id, traces_pattern_id, evaluations_pattern_id
+        )
 
     # Create Agent Observability dashboard
     if traces_pattern_id:
@@ -2112,7 +2159,12 @@ def run_field_refresh_backstop():
     """
     wait_for_dashboards()
     workspace_id = get_existing_workspace()
-    titles = ["logs-otel-v1*", "otel-v1-apm-span*", "otel-v2-apm-service-map*"]
+    titles = [
+        "logs-otel-v1*",
+        "otel-v1-apm-span*",
+        "otel-v2-apm-service-map*",
+        "otel-v1-genai-evaluation*",
+    ]
     delayed_field_refresh(workspace_id, titles)
 
 
