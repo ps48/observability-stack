@@ -1,0 +1,329 @@
+---
+title: "Instrument Evaluations"
+description: "Emit agent evaluation results with the OpenSearch GenAI SDKs: score(), @scorer and defineScorer, evaluate(), Benchmark, and the traces and logs endpoints"
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+The [Python](/docs/send-data/ai-agents/python/) and [TypeScript](/docs/send-data/ai-agents/typescript/) GenAI Observability SDKs give you four ways to produce evaluation results:
+
+| API | Use it to | Emits |
+|---|---|---|
+| `score()` | Record one result for a span, trace, or session (online or after the fact) | 1 `gen_ai.evaluation.result` event |
+| `@scorer` (Python) / `defineScorer` (TS) | Declare a scorer's evaluation name and pass rule | - |
+| `evaluate()` | Run the agent over a dataset, score every output, record a run | grades + `opensearch.test_case.result` + `opensearch.test_suite_run.result` |
+| `Benchmark` | Upload results you already computed elsewhere as a run | the same three event types, no spans |
+
+All of them emit OpenTelemetry **log events** over OTLP logs. None of them adds spans to the agent's trace. For the event fields, see [Data model & storage](/docs/agent-evals/data-model/).
+
+## Endpoints: traces and logs
+
+Spans go to `/v1/traces` and evaluation events go to `/v1/logs`. If the logs endpoint is wrong, traces still arrive but every evaluation result is silently missing. `register()` sets up both pipelines:
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+from opensearch_genai_observability_sdk_py import register
+
+# OTel Collector of the observability stack: logs derived as http://localhost:4318/v1/logs
+provider = register(endpoint="http://localhost:4318/v1/traces", service_name="my-agent")
+
+# Or name both explicitly
+provider = register(
+    endpoint="http://collector:4318/v1/traces",
+    logs_endpoint="http://collector:4318/v1/logs",
+    service_name="my-agent",
+)
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+import { register } from "@opensearch-project/genai-observability-sdk-ts";
+
+// logs derived as http://localhost:4318/v1/logs
+const provider = await register({ endpoint: "http://localhost:4318/v1/traces", serviceName: "my-agent" });
+
+// Or name both explicitly
+await register({
+  endpoint: "http://collector:4318/v1/traces",
+  logsEndpoint: "http://collector:4318/v1/logs",
+  serviceName: "my-agent",
+});
+```
+
+</TabItem>
+</Tabs>
+
+The SDK resolves the logs endpoint in this order:
+
+1. `logs_endpoint` / `logsEndpoint`
+2. `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`
+3. The traces endpoint, but only if it ends in `/v1/traces` (swapped for `/v1/logs`)
+4. `OTEL_EXPORTER_OTLP_ENDPOINT` with `/v1/logs` appended
+5. `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` ending in `/v1/traces`
+6. The Data Prepper default, `http://localhost:21890/opentelemetry/v1/logs`
+
+The SDK never guesses beyond these rules. If none of them applies, it prints a warning and skips logs. That happens, for example, when the traces URL has another path, when traces use gRPC without an explicit logs URL, or when you pass a custom exporter without a log exporter. With environment variables only, `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318` covers both signals.
+
+Call `provider.force_flush()` (TS: `await provider.forceFlush()`) before a short-lived script exits. It flushes spans and evaluation events. If you configure OpenTelemetry yourself instead of calling `register()`, install a global `LoggerProvider` with an OTLP log exporter, or the events are dropped.
+
+## `score()`: one result
+
+`score()` records one evaluation result. Its trace context is that of the span being judged:
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+from opensearch_genai_observability_sdk_py import Op, observe, score
+
+# Inline: inside the evaluated span, the event is parented to the active span
+@observe(op=Op.INVOKE_AGENT, name="support_agent")
+def support_agent(question: str) -> str:
+    answer = "Reset it from Settings > Account."
+    score("non_empty_answer", 1.0 if answer else 0.0, threshold=1, evaluator="answer_checks")
+    return answer
+
+# After the fact: score a stored span by its ids (it may have ended long ago)
+score(
+    "answer_quality",
+    4.0,
+    trace_id="6ebb9835f43af1552f2cebb9f5165e39",
+    span_id="89829115c2128845",
+    explanation="Correct and concise; cites the right setting.",
+    evaluator="quality_judge",
+    evaluator_version="1.2.0",
+    evaluator_type="llm_judge",
+    score_min=1,
+    score_max=5,
+    threshold=4,
+)
+
+# Trace-level: only a trace id is known. No span id is invented; the event carries
+# opensearch.evaluation.trace_id and level "trace".
+score("task_success", 1.0, trace_id="6ebb9835f43af1552f2cebb9f5165e39", assessment="pass")
+
+# Session-level: judge a whole conversation
+score("goal_success", 5.0, conversation_id="session-42", level="session", threshold=4, score_min=1, score_max=5)
+
+# The evaluator itself failed: no value, an error type
+score("answer_quality", trace_id="6ebb9835f43af1552f2cebb9f5165e39",
+      span_id="89829115c2128845", error_type="TimeoutError", evaluator="quality_judge")
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+import { Op, score, withObserve } from "@opensearch-project/genai-observability-sdk-ts";
+
+// Inline: the evaluated span is the active span
+withObserve("support_agent", { op: Op.INVOKE_AGENT }, () => {
+  score({ name: "non_empty_answer", value: 1, threshold: 1, evaluator: "answer_checks" });
+});
+
+// After the fact: score a stored span by its ids
+score({
+  name: "answer_quality",
+  value: 4,
+  traceId: "6ebb9835f43af1552f2cebb9f5165e39",
+  spanId: "89829115c2128845",
+  explanation: "Correct and concise; cites the right setting.",
+  evaluator: "quality_judge",
+  evaluatorVersion: "1.2.0",
+  evaluatorType: "llm_judge",
+  scoreMin: 1,
+  scoreMax: 5,
+  threshold: 4,
+});
+
+// Trace-level and session-level
+score({ name: "task_success", value: 1, traceId: "6ebb9835f43af1552f2cebb9f5165e39", assessment: "pass" });
+score({ name: "goal_success", value: 5, conversationId: "session-42", level: "session", threshold: 4 });
+```
+
+</TabItem>
+</Tabs>
+
+### Parameters
+
+The Python name is listed first, then the TypeScript name where it differs.
+
+| Parameter | Attribute | Description |
+|---|---|---|
+| `name` | `gen_ai.evaluation.name` | Evaluation (metric) name, for example `answer_quality`. Required. |
+| `value` | `gen_ai.evaluation.score.value` | Numeric score (double). |
+| `label` | `gen_ai.evaluation.score.label` | Low-cardinality label, for example `correct`. A label is not a verdict. |
+| `explanation` | `gen_ai.evaluation.explanation` | Evaluator rationale. |
+| `trace_id` / `traceId`, `span_id` / `spanId` | event trace context | The evaluated span. With only a trace id, the result is trace-level. |
+| `level` | `opensearch.evaluation.level` | `span`, `trace`, `session`, or `tool_call`. Inferred when omitted. |
+| `evaluator`, `evaluator_version` / `evaluatorVersion` | instrumentation scope, `opensearch.evaluation.evaluator.name` / `.version` | Who produced the result. Defaults to the SDK scope. |
+| `evaluator_type` / `evaluatorType` | `opensearch.evaluation.evaluator.type` | `llm_judge`, `code`, `human`, or `external`. |
+| `threshold` | `opensearch.evaluation.score.threshold` | Pass threshold (see below). |
+| `direction` | `opensearch.evaluation.score.direction` | `maximize` (default with a threshold) or `minimize`. |
+| `score_min` / `scoreMin`, `score_max` / `scoreMax` | `opensearch.evaluation.score.min` / `.max` | Scale bounds. Used to normalize charts and deltas. |
+| `assessment` | `opensearch.evaluation.assessment` | Explicit verdict: `pass` or `fail` (booleans accepted). |
+| `conversation_id` / `conversationId` | `gen_ai.conversation.id` | Evaluated session. |
+| `agent_name` / `agentName` | `gen_ai.agent.name` | Evaluated agent. |
+| `response_id` / `responseId` | `gen_ai.response.id` | Evaluated completion. |
+| `error_type` / `errorType` | `error.type` | Set when the evaluator failed. |
+| `judge_trace_id` / `judgeTraceId` | `opensearch.evaluation.judge.trace_id` | The LLM judge's own trace. |
+| `attributes` | as given | Extra attributes. |
+
+### Declaring verdicts
+
+Results without a declared rule show as **Scored**, not pass/fail. You can declare a rule in two ways:
+
+```python
+score("answer_quality", 3.0, threshold=4, score_min=1, score_max=5)  # assessment=fail
+score("latency_s", 9.2, threshold=12, direction="minimize")          # assessment=pass
+score("tool_selection", 1.0, assessment="pass")                      # explicit verdict
+```
+
+- **`assessment`** - an explicit verdict. It always wins. Invalid values are dropped with a warning.
+- **`threshold`** (+ `direction`) - the SDK records the threshold and also computes and records the assessment. With `maximize`, the result passes when `value >= threshold`; with `minimize`, it passes when `value <= threshold`.
+
+## `evaluate()`: an offline run
+
+`evaluate()` runs a task on every test case, calls each scorer with `(input, output, expected)`, and records the run. Each case's task call is its own trace, like production. The SDK stamps the root span(s) the task starts with `test.suite.name`, `test.suite.run.id`, `test.case.id`, and `test.case.name`.
+
+<Tabs syncKey="lang">
+<TabItem label="Python">
+
+```python
+from opensearch_genai_observability_sdk_py import EvalScore, Op, evaluate, observe, register, scorer
+
+provider = register(endpoint="http://localhost:4318/v1/traces", service_name="travel-agent")
+
+@observe(op=Op.INVOKE_AGENT, name="travel_agent")
+def travel_agent(question: str) -> str:
+    return "Flights to Lisbon start at $420."   # your agent
+
+@scorer(name="mentions_price", threshold=1, evaluator_type="code")
+def mentions_price(input, output, expected):
+    return 1.0 if "$" in output else 0.0          # float: verdict from the threshold
+
+@scorer(name="on_topic")
+def on_topic(input, output, expected):
+    return expected.lower() in output.lower()     # bool: a verdict
+
+@scorer(name="answer_quality", threshold=4, score_min=1, score_max=5, evaluator_type="llm_judge")
+def answer_quality(input, output, expected):
+    return EvalScore(name="answer_quality", value=4.0, explanation="judge rationale")
+
+evaluate(
+    name="travel-agent-golden",                   # suite name: keep it stable across runs
+    task=travel_agent,
+    data=[{"case_id": "lisbon", "input": "Cheapest flight to Lisbon?", "expected": "Lisbon"}],
+    scores=[mentions_price, on_topic, answer_quality],
+    metadata={"agent.version": "v2", "agent.model": "my-model"},
+    record_io=True,                               # store input, expected, output on the case event
+)
+provider.force_flush()
+```
+
+</TabItem>
+<TabItem label="TypeScript">
+
+```typescript
+import { defineScorer, evaluate, observe, Op, register } from "@opensearch-project/genai-observability-sdk-ts";
+
+const provider = await register({ endpoint: "http://localhost:4318/v1/traces", serviceName: "travel-agent" });
+
+const travelAgent = observe({ name: "travel_agent", op: Op.INVOKE_AGENT }, (q: unknown) =>
+  "Flights to Lisbon start at $420.");
+
+const mentionsPrice = defineScorer({ name: "mentions_price", threshold: 1, evaluatorType: "code" },
+  (_input, output) => (String(output).includes("$") ? 1 : 0));
+const onTopic = defineScorer({ name: "on_topic" },
+  (_input, output, expected) => String(output).toLowerCase().includes(String(expected).toLowerCase()));
+
+evaluate({
+  name: "travel-agent-golden",
+  task: (input) => travelAgent(input),       // synchronous
+  data: [{ caseId: "lisbon", input: "Cheapest flight to Lisbon?", expected: "Lisbon" }],
+  scores: [mentionsPrice, onTopic],
+  metadata: { "agent.version": "v2" },
+  recordIo: true,
+});
+await provider.forceFlush();
+```
+
+</TabItem>
+</Tabs>
+
+**Scorers.** A scorer returns a number, a boolean (a verdict), an `EvalScore`, or a list of `EvalScore`s. `@scorer(...)` / `defineScorer(spec, fn)` declare the following:
+
+- `name` - the evaluation name for number and boolean results, and for the error grade. Defaults to the function name.
+- `threshold` and `direction` - the pass rule. `direction` defaults to `maximize` when a threshold is set.
+- `score_min` / `score_max` (TS: `scoreMin` / `scoreMax`) - the scale bounds.
+- `evaluator` - the instrumentation scope and `evaluator.name`. Defaults to the function name.
+- `evaluator_type` (TS: `evaluatorType`).
+
+Fields set on a returned `EvalScore` (`assessment`, `passed`, `threshold`, `direction`, bounds) take precedence over the declaration.
+
+**Status and errors:**
+
+- A task that raises does not stop the run. Its case gets status `error` with `error.type`, and its scorers are skipped.
+- A scorer that raises emits a grade with `error.type` and no value, under its declared name, and marks the case `error`.
+- Otherwise a case is `fail` if any of its scores has a `fail` verdict, and `pass` if not.
+- The run status (`test.suite.run.status`) is `failure` only if a case errored.
+
+**Run metadata.** `metadata` is copied to the case and run events. The Evaluations UI reads `agent.version` and `agent.model` for the Agent version and Model columns. It also shows Tokens and Cost columns when metadata keys end in `tokens` or contain `cost`.
+
+<Aside type="note">
+`evaluate()` stamps root spans through a span processor on the global SDK `TracerProvider`, so instrument the agent with the global provider (`@observe` after `register()`). If the task starts no span, the case and score events carry no trace context. In TypeScript, `task` must be synchronous. With an OTel JS 2.x provider, add `TestCaseSpanProcessor` to it yourself. Scorers run outside the agent trace, so a traced LLM judge gets its own trace.
+</Aside>
+
+## `Benchmark`: upload existing results
+
+Use `Benchmark` when another tool already produced the scores. Each `log()` emits one `opensearch.test_case.result` event and one `gen_ai.evaluation.result` event per score. `close()` (or leaving the `with` block) emits the run event. No spans are created. Pass the agent run's `trace_id` and `span_id` to link a case to its trace.
+
+```python
+from opensearch_genai_observability_sdk_py import Benchmark, EvalScore
+
+with Benchmark(name="nightly-eval", metadata={"agent.version": "v3"}, record_io=True) as b:
+    b.log(input="What is Python?", output="A language", scores={"accuracy": 1.0})
+    b.log(
+        input="Capital of France?",
+        output="Lyon",
+        scores=[EvalScore(name="accuracy", value=0.0, threshold=1)],  # declares a verdict: fail
+        trace_id="6ebb9835f43af1552f2cebb9f5165e39",
+        span_id="89829115c2128845",
+    )
+```
+
+`log()` also accepts `case_id`, `case_name`, `status` (`pass` / `fail` / `error`), `error`, `error_type`, and `duration_ms`. Examples for DeepEval, RAGAS, MLflow, and pytest are in [Evaluation integrations](/docs/agent-evals/evaluation-integrations/).
+
+## Scoring stored traces
+
+For online scoring in a batch job, `OpenSearchTraceRetriever` (Python extra `[opensearch]`) reads recent agent traces. `find_evaluated_trace_ids()` skips traces that already have results in `otel-v1-genai-evaluation*`:
+
+```python
+from opensearch_genai_observability_sdk_py import OpenSearchTraceRetriever, register, score
+
+provider = register(endpoint="http://localhost:4318/v1/traces", service_name="eval-job")
+retriever = OpenSearchTraceRetriever(
+    host="https://localhost:9200", auth=("admin", "My_password_123!@#"), verify_certs=False
+)
+
+roots = retriever.list_root_spans(services=["my-agent"], max_results=50)
+done = retriever.find_evaluated_trace_ids([r.trace_id for r in roots])
+for root in roots:
+    if root.trace_id in done:
+        continue
+    spans = retriever.get_traces(root.trace_id).traces[0].spans
+    tool_calls = [s for s in spans if s.operation_name == "execute_tool"]
+    score("used_a_tool", 1.0 if tool_calls else 0.0, trace_id=root.trace_id,
+          span_id=root.span_id, threshold=1, evaluator="batch_checks", evaluator_type="code")
+provider.force_flush()
+```
+
+The stack's eval canary (`docker-compose/agent-eval-canary/`) follows the same pattern with four deterministic checks.
+
+## Other producers
+
+The SDKs are a convenience, not a requirement. Any OpenTelemetry producer that emits a log record with event name `gen_ai.evaluation.result`, the evaluated span's trace context, and the attributes in [Data model & storage](/docs/agent-evals/data-model/) is stored and shown the same way. Its results are tagged with source `otel` instead of `opensearch-sdk`.

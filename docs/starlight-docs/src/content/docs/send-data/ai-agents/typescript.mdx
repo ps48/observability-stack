@@ -40,13 +40,13 @@ The SDK exports these functions and classes. This page covers the full API surfa
 | `withObserve()` | Block-level tracing | [This page](#withobserve) |
 | `Op` | Operation name constants | [This page](#op-constants) |
 | `enrich()` | Set GenAI attributes on active span | [This page](#enrich) |
-| `score()` | Attach evaluation scores to traces | [This page](#score) |
+| `score()` | Record an evaluation result for a span, trace, or session | [This page](#score) |
 | `evaluate()` | Run a task against a dataset with scorers | [This page](#evaluate) |
 | `Benchmark` | Upload pre-computed eval results | [This page](#benchmark) |
 | `OpenSearchTraceRetriever` | Query stored traces from OpenSearch | [This page](#opensearchtraceretriever) |
 | `AWSSigV4OTLPExporter` | SigV4-signed OTLP exporter | [This page](#aws-authentication) |
 
-For evaluation concepts (scoring traces, running experiments, comparing agent versions), see [Evaluation & Scoring](/docs/agent-evals/evaluation/).
+For evaluation concepts (verdicts, offline runs, comparing agent versions), see [Agent Evals](/docs/agent-evals/).
 
 ## Quick start
 
@@ -331,94 +331,69 @@ Auto-instrumentation coverage in the TypeScript SDK is narrower than the Python 
 
 ## `score()`
 
-Attaches an evaluation score to a trace or span. Scores are emitted as OTEL spans through the same OTLP pipeline - no separate client or index needed. When `traceId` is provided, the score span is attached to that trace so it appears in the same trace waterfall.
+Records one evaluation result as an OTel log event, `gen_ai.evaluation.result`, carrying the trace context of the evaluated span. It adds no span to the trace. The event is exported over OTLP logs: `register()` derives the logs URL from a traces URL ending in `/v1/traces`, or takes `logsEndpoint`. Data Prepper stores it in `otel-v1-genai-evaluation-*`.
 
 ```typescript
 import { score } from "@opensearch-project/genai-observability-sdk-ts";
 
-// Span-level: score a specific span
+// Span-level, with a declared pass rule
 score({
   name: "accuracy",
   value: 0.95,
   traceId: "6ebb9835f43af1552f2cebb9f5165e39",
   spanId: "89829115c2128845",
+  threshold: 0.8,
+  evaluator: "accuracy_judge",
   explanation: "Weather data matches ground truth",
 });
 
-// Trace-level: attaches to the trace's root span
-score({
-  name: "relevance",
-  value: 0.92,
-  traceId: "6ebb9835f43af1552f2cebb9f5165e39",
-  explanation: "Response addresses the user's query",
-});
-
-// Standalone: no trace linkage
-score({ name: "fluency", value: 0.88 });
+// Trace-level (no span id is invented), with an explicit verdict
+score({ name: "task_success", value: 1, traceId: "6ebb9835f43af1552f2cebb9f5165e39", assessment: "pass" });
 ```
 
-| Parameter | Type | Description |
-|---|---|---|
-| `name` | `string` | Metric name, e.g. `"relevance"`, `"factuality"`. |
-| `value` | `number` | Numeric score. |
-| `traceId` | `string` | Hex trace ID to score. Omit for standalone scores. |
-| `spanId` | `string` | Hex span ID for span-level scoring. When omitted, attaches to the root span. |
-| `label` | `string` | Human-readable label, e.g. `"pass"`. |
-| `explanation` | `string` | Evaluator rationale (truncated to 500 chars). |
-| `responseId` | `string` | LLM completion ID for correlation. |
-| `attributes` | `Record<string, unknown>` | Additional span attributes (string/number/boolean values). |
+Without `threshold` or `assessment`, a result shows as "Scored" (no pass/fail). For all parameters and session-level results, see [Instrument evaluations](/docs/agent-evals/instrumenting/#score-one-result).
 
 ---
 
 ## `evaluate()`
 
-Runs a task against a dataset, scores each output, and records results as OTEL spans.
+Runs a synchronous task against a dataset, scores each output, and records the run as log events. Each case's agent run stays its own trace, and its root span is stamped with the `test.*` ids. Per score, it emits a `gen_ai.evaluation.result` event. Per case, it emits an `opensearch.test_case.result` event. At the end, it emits one `opensearch.test_suite_run.result` event. Wrap scorers in `defineScorer()` to declare their name and pass rule.
 
 ```typescript
-import { evaluate } from "@opensearch-project/genai-observability-sdk-ts";
-import type { EvalScore } from "@opensearch-project/genai-observability-sdk-ts";
+import { defineScorer, evaluate } from "@opensearch-project/genai-observability-sdk-ts";
 
-function accuracy(input: unknown, output: unknown, expected: unknown): EvalScore {
-  return { name: "accuracy", value: String(output).includes(String(expected)) ? 1.0 : 0.0 };
-}
+const accuracy = defineScorer({ name: "accuracy", threshold: 1 }, (_input, output, expected) =>
+  String(output).includes(String(expected)) ? 1 : 0);
 
 const result = evaluate({
   name: "rag-agent",
   task: (input) => callMyAgent(input),
   data: [
-    { input: "What is Python?", expected: "programming language" },
-    { input: "What causes rain?", expected: "water vapor" },
+    { caseId: "python", input: "What is Python?", expected: "programming language" },
+    { caseId: "rain", input: "What causes rain?", expected: "water vapor" },
   ],
   scores: [accuracy],
-  metadata: { agentVersion: "v2" },
+  metadata: { "agent.version": "v2" },
   recordIo: true,
 });
 
 console.log(result.summary);
 ```
 
-Produces:
-
-```
-test_suite_run rag-agent
-├── test_case
-└── test_case
-```
-
 | Parameter | Type | Description |
 |---|---|---|
-| `name` | `string` | Benchmark name (`test.suite.name`), stable across runs. |
-| `task` | `(input: unknown) => unknown` | Function that takes input and returns output. |
+| `name` | `string` | Suite name (`test.suite.name`), stable across runs. |
+| `task` | `(input: unknown) => unknown` | Synchronous function that takes input and returns output. |
 | `data` | `Array<{ input, expected?, caseId?, caseName? }>` | Test cases. |
-| `scores` | `ScorerFn[]` | Scorers: `(input, output, expected)` returning `EvalScore`, `EvalScore[]`, or `number`. |
-| `metadata` | `Record<string, unknown>` | Attached to the root span (reserved keys are filtered). |
-| `recordIo` | `boolean` | Record input/output/expected as span attributes (default `false`). |
+| `scores` | `Array<ScorerFn \| Scorer>` | Scorers: `(input, output, expected)` returning `EvalScore`, `EvalScore[]`, `number`, or `boolean`, optionally wrapped with `defineScorer()`. |
+| `metadata` | `Record<string, unknown>` | Copied to the case and run events (reserved keys are filtered). |
+| `recordIo` | `boolean` | Record input/expected/output on the case event (default `false`). |
 
 ---
 
 ## `Benchmark`
 
-Uploads pre-computed evaluation results from any framework as OTEL spans.
+Uploads pre-computed evaluation results from any framework as the same case, score, and run events. It creates no spans.
 
 ```typescript
 import { Benchmark } from "@opensearch-project/genai-observability-sdk-ts";
@@ -427,7 +402,7 @@ const bench = new Benchmark("nightly-eval", { metadata: { model: "gpt-4o" }, rec
 
 bench.log({ input: "What is Python?", output: "A language", scores: { accuracy: 1.0 } });
 
-// Link to existing agent traces
+// Link to an existing agent trace
 bench.log({
   input: "query",
   output: "answer",
@@ -439,7 +414,7 @@ bench.log({
 const summary = bench.close();
 ```
 
-For evaluation concepts and workflows, see [Evaluation & Scoring](/docs/agent-evals/evaluation/).
+For evaluation concepts and workflows, see [Agent Evals](/docs/agent-evals/).
 
 ---
 
@@ -467,7 +442,7 @@ for (const trace of session.traces) {
 // List recent root spans
 const roots = await retriever.listRootSpans({ services: ["my-agent"], maxResults: 10 });
 
-// Check which traces already have evaluation spans
+// Check which traces already have evaluation results (in otel-v1-genai-evaluation*)
 const evaluated = await retriever.findEvaluatedTraceIds(["trace-id-1", "trace-id-2"]);
 ```
 
@@ -508,7 +483,8 @@ The exporter resolves credentials from the standard AWS provider chain (environm
 | Variable | Description | Default |
 |---|---|---|
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | Full OTLP traces endpoint URL (used as-is) | |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Base OTLP endpoint URL (`/v1/traces` appended) | Data Prepper default |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Base OTLP endpoint URL (`/v1/traces` and `/v1/logs` appended) | Data Prepper default |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | Full OTLP logs URL for evaluation events (used as-is) | derived from the traces endpoint |
 | `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` | Protocol for traces (`http/protobuf`, `grpc`) | |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | Protocol for all signals (`http/protobuf`, `grpc`) | |
 | `AWS_DEFAULT_REGION` | AWS region for SigV4 signing | |
@@ -520,6 +496,6 @@ The exporter resolves credentials from the standard AWS provider chain (environm
 
 - [AI Observability - Getting Started](/docs/ai-observability/getting-started/) - end-to-end walkthrough
 - [Python SDK reference](/docs/send-data/ai-agents/python/) - the Python counterpart
-- [Evaluation & Scoring](/docs/agent-evals/evaluation/) - score traces, run experiments
+- [Agent Evals](/docs/agent-evals/) - score traces, run offline evaluation runs, review results
 - [Agent Traces](/docs/ai-observability/agent-tracing/) - viewing traces in OpenSearch Dashboards
 - [GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) - OTel spec reference

@@ -38,8 +38,8 @@ flowchart LR
 
 - **Agent tracing** - visualize LLM agent execution as trace trees, DAG graphs, and timelines
 - **GenAI semantic conventions** - standard `gen_ai.*` attributes for model, tokens, tools, and sessions
-- **Evaluation & scoring** - attach quality scores to traces, run experiments against datasets
-- **Trace retrieval** - query stored traces from OpenSearch for evaluation pipelines
+- **Agent evaluations** - record evaluation results as OTel events, run offline test suites in CI, review verdicts and regressions
+- **Trace retrieval** - query stored traces from OpenSearch for evaluation jobs
 - **Auto-instrumentation** - OpenAI, Anthropic, Bedrock, LangChain, and 20+ libraries traced automatically
 - **MCP server** - query OpenSearch from AI agents via the built-in Model Context Protocol server
 
@@ -66,9 +66,11 @@ Explore traces in OpenSearch Dashboards:
 
 ## Evaluate
 
-Score agent quality and run experiments:
+Score agent quality and run offline evaluation runs:
 
-- [Evaluation & Scoring](/docs/agent-evals/evaluation/) - `score()`, `evaluate()`, `Benchmark`, trace retrieval
+- [Agent Evals](/docs/agent-evals/) - concepts, verdict rules, and the [quickstart](/docs/agent-evals/quickstart/)
+- [Instrument evaluations](/docs/agent-evals/instrumenting/) - `score()`, `@scorer`, `evaluate()`, `Benchmark`
+- [Evaluations UI](/docs/agent-evals/evaluations-ui/) - Overview, Results, Evaluation runs, and Compare in OpenSearch Dashboards
 - **[Agent Health](/docs/agent-health/)** - Golden Path trajectory comparison, LLM judge scoring, batch experiments via UI and CLI
 
 ## Connect

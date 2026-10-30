@@ -156,6 +156,10 @@ The right panel shows details for the selected span:
 
 - **Timeline tab**: A Gantt-style timeline showing all spans arranged chronologically. Bar widths are proportional to span duration and color-coded by category. You can select a span in the timeline to synchronize with the tree view.
 
+### Evaluations
+
+When your traces have [evaluation results](/docs/agent-evals/), the traces and sessions tables show an **Evaluations** column with a verdict chip for each result (Pass, Fail, Evaluator error, or Scored). The trace details flyout has an **Evaluations** tab that lists the trace's trace-level and span-level results with their scores and explanations. **View in Logs** opens the raw events in Explore Logs. From **Agent Monitoring > Evaluations**, **Show traces where it fails** opens this page filtered to the traces behind a failing evaluation. See [Evaluations UI](/docs/agent-evals/evaluations-ui/).
+
 ## Querying traces
 
 Agent Traces uses PPL (Piped Processing Language) for all data fetching. You can write queries in the query panel at the top of the page.

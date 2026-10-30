@@ -1,0 +1,164 @@
+---
+title: "Evaluation Data Model & Storage"
+description: "The evaluation event contract (gen_ai.evaluation.result, opensearch.test_case.result, opensearch.test_suite_run.result), the otel-v1-genai-evaluation index, derived fields, and the evaluations dataset"
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Agent evaluation data is three kinds of OpenTelemetry **log-based events**. All three go through the OTLP logs path and are stored in the same index. The `eventName` field tells them apart.
+
+| `eventName` | One per | Trace context |
+|---|---|---|
+| `gen_ai.evaluation.result` | evaluation result (grade) | the evaluated span: `traceId` + `spanId` (or none for trace- or session-level results without a span) |
+| `opensearch.test_case.result` | test case of an offline run | the agent run's root span, if the task started one |
+| `opensearch.test_suite_run.result` | offline run | none |
+
+## The event envelope
+
+Each event is one OTLP `LogRecord` with these fields:
+
+- `EventName` set to one of the names above. This is the top-level log record field, not an attribute.
+- `Timestamp` set to when the evaluation finished.
+- Severity `INFO` (9) and an empty body.
+- Instrumentation scope set to the **evaluator** (for example `quality_judge` with its version). When no evaluator is named, the scope is the SDK (`opensearch-genai-observability-sdk-py` / `-ts`). Loggers created by the SDK also set the scope attributes `opensearch.genai.sdk.name` and `opensearch.genai.sdk.version`.
+- Resource attributes of the producer (`service.name`, ...).
+
+All evaluation data is in the record's attributes.
+
+## `gen_ai.evaluation.result` attributes
+
+Standard [GenAI semantic convention](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-events/) attributes:
+
+| Attribute | Type | When |
+|---|---|---|
+| `gen_ai.evaluation.name` | string | always |
+| `gen_ai.evaluation.score.value` | double | numeric score |
+| `gen_ai.evaluation.score.label` | string | label, low cardinality (`correct`, `relevant`, ...) |
+| `gen_ai.evaluation.explanation` | string | evaluator rationale |
+| `gen_ai.response.id` | string | evaluated completion, if known |
+| `gen_ai.conversation.id` | string | evaluated session, if known |
+| `gen_ai.agent.name` | string | evaluated agent, if known |
+| `error.type` | string | the evaluator failed (no value) |
+
+OpenSearch extensions under `opensearch.evaluation.*`. They cover fields that are still proposals in the semantic conventions, and will move to `gen_ai.*` names when those proposals merge:
+
+| Attribute | Type | Values |
+|---|---|---|
+| `opensearch.evaluation.level` | string | `span`, `trace`, `session`, `tool_call` |
+| `opensearch.evaluation.evaluator.name` / `.version` | string | evaluator identity |
+| `opensearch.evaluation.evaluator.type` | string | `llm_judge`, `code`, `human`, `external` |
+| `opensearch.evaluation.score.min` / `.max` | double | scale bounds |
+| `opensearch.evaluation.score.direction` | string | `maximize`, `minimize` |
+| `opensearch.evaluation.score.threshold` | double | pass threshold |
+| `opensearch.evaluation.assessment` | string | `pass`, `fail`: the producer's verdict |
+| `opensearch.evaluation.trace_id` | string | target trace when no span id is known (trace-level result) |
+| `opensearch.evaluation.judge.trace_id` | string | the LLM judge's own trace |
+
+In an offline run, a grade also carries `test.suite.name`, `test.suite.run.id`, `test.case.id`, and `test.case.name`. These are the proposed [`test.*` attributes](https://github.com/open-telemetry/semantic-conventions/issues/1262).
+
+## Offline run events
+
+`opensearch.test_case.result`:
+
+| Attribute | Type | Notes |
+|---|---|---|
+| `test.suite.name`, `test.suite.run.id`, `test.case.id`, `test.case.name` | string | run and case ids |
+| `test.case.result.status` | string | `pass`, `fail`, `error` |
+| `error.type` | string | exception class when the task or a scorer raised |
+| `opensearch.test_case.duration_ms` | double | |
+| `opensearch.test_case.input` / `.expected` / `.output` | string | only with `record_io=True`, truncated |
+| run metadata | any | for example `agent.version`, `agent.model` |
+
+`opensearch.test_suite_run.result`:
+
+| Attribute | Type | Notes |
+|---|---|---|
+| `test.suite.name`, `test.suite.run.id` | string | |
+| `test.suite.run.status` | string | `success` if no case errored, else `failure` |
+| `opensearch.test_suite_run.case_count` / `.pass_count` / `.fail_count` / `.error_count` | long | |
+| `opensearch.test_suite_run.duration_ms` | double | |
+| run metadata | any | |
+
+The agent's own root span in each test case is stamped with the same `test.*` ids in the span index.
+
+## Storage: `otel-v1-genai-evaluation-*`
+
+The stack's Data Prepper `otlp-pipeline` routes log records by `eventName`. The three evaluation event names go to the `genai-evaluation-pipeline`, and every other log goes to the general logs index as before. The evaluation pipeline writes **daily indices** named `otel-v1-genai-evaluation-YYYY.MM.dd`. It installs the index template `genai-evaluation-index-template.json`, which sets these mappings:
+
+- `attributes.gen_ai.evaluation.score.value`, `opensearch.evaluation.score.*`, and the duration fields are `double`. The run counts are `long`.
+- Evaluation names, labels, levels, verdict fields, `test.*`, `error.type`, `traceId`, `spanId`, and `eventName` are `keyword`.
+- `gen_ai.evaluation.explanation` and `opensearch.test_case.*` content are `text`, with a `keyword` sub-field (`ignore_above` 256).
+- `time` and `@timestamp` are `date_nanos`.
+- Other string attributes map as `keyword` and other whole numbers as `double` through dynamic templates. The template allows 2,000 fields per index (`mapping.total_fields.limit`).
+
+The pipeline also does three more things:
+
+- It copies `time` to `@timestamp`.
+- It sets the document id to a hash of event name, time, trace and span ids, session, evaluation name, test case, and scope. A retried export or a re-import of the same result overwrites the document instead of duplicating it.
+- It adds **derived fields** under `attributes.derived.*`, so that readers don't have to reimplement fallbacks:
+
+| Field | Rule |
+|---|---|
+| `derived.evaluation.level` | `opensearch.evaluation.level`; otherwise a level reported by a known third-party evaluator; otherwise `span` when the record has a span id, else `trace` (grades only) |
+| `derived.evaluation.source` | `opensearch-sdk` when the scope carries `opensearch.genai.sdk.name`; a known third-party source when recognized; otherwise `otel` (grades only) |
+| `derived.session.id` | `gen_ai.conversation.id`, else `session.id` |
+| `derived.evaluation.target_trace_id` | `traceId`, else `opensearch.evaluation.trace_id` |
+
+The Helm chart ships the same pipeline, index template (as a ConfigMap), and init job as Docker Compose.
+
+<Aside type="caution">
+The init script's ISM retention policies cover spans, logs, and service maps, but not `otel-v1-genai-evaluation-*`. Daily evaluation indices are kept until you delete them, or until you add an ISM policy for the pattern.
+</Aside>
+
+## Joining results to traces
+
+Results join to agent spans (`otel-v1-apm-span-*`) on `traceId`, plus `spanId` for span- and tool-call-level results. They join to sessions on `attributes.derived.session.id` = the span attribute `gen_ai.conversation.id`. Use `derived.evaluation.target_trace_id` to find a result's trace whether or not it has a span context.
+
+Example PPL queries:
+
+```sql
+-- Count and mean per evaluation
+source = otel-v1-genai-evaluation*
+| where eventName = 'gen_ai.evaluation.result'
+| stats count() as results, avg(`attributes.gen_ai.evaluation.score.value`) as mean
+    by `attributes.gen_ai.evaluation.name`
+```
+
+```sql
+-- Runs of a suite with their pass counts
+source = otel-v1-genai-evaluation*
+| where eventName = 'opensearch.test_suite_run.result'
+    and `attributes.test.suite.name` = 'quickstart-suite'
+| fields @timestamp, `attributes.test.suite.run.id`,
+    `attributes.opensearch.test_suite_run.pass_count`, `attributes.opensearch.test_suite_run.case_count`
+```
+
+Always filter grades with `eventName = 'gen_ai.evaluation.result'`. The case and run events share the index but are not evaluation results.
+
+## The evaluations dataset and app config
+
+OpenSearch Dashboards reads evaluations through a **dataset** rather than a hard-coded index. The stack's init job (`opensearch-dashboards-init`) creates two saved objects in the Observability Stack workspace:
+
+- **Evaluation Dataset - Local Cluster**: a logs dataset (index pattern) over `otel-v1-genai-evaluation*`, with time field `time` and schema mappings for `time`, `traceId`, and `spanId`.
+- **`AgentEvals-Config-<workspace>`**: the Agent Evaluations app config. It is a `correlations` saved object that names the traces dataset and the evaluations dataset, and the Evaluations pages read their index from it.
+
+  ```json
+  {
+    "type": "correlations",
+    "attributes": {
+      "correlationType": "AgentEvals-Config-<workspace id>",
+      "title": "AgentEvals-Config",
+      "version": "1.0.0",
+      "entities": [
+        { "tracesDataset": { "id": "references[0].id" } },
+        { "evaluationsDataset": { "id": "references[1].id" } }
+      ]
+    },
+    "references": [
+      { "name": "entities[0].index", "type": "index-pattern", "id": "<traces dataset id>" },
+      { "name": "entities[1].index", "type": "index-pattern", "id": "<evaluations dataset id>" }
+    ]
+  }
+  ```
+
+The **Settings** dialog on the Evaluations page edits the same object, so a dataset you pick there survives re-runs of the init job. The init job repoints the config only if one of its index patterns no longer exists. To use another cluster or index, create a logs dataset over it, or let Settings create one, and select it in Settings.

@@ -8,9 +8,14 @@
 
 ## Agent Evals
 
-- [Agent Evals](https://observability.opensearch.org/docs/agent-evals/): Measure the quality of your AI agents — score traces, run experiments against datasets, and bring in external eval frameworks
-- [Evaluation & Scoring](https://observability.opensearch.org/docs/agent-evals/evaluation/): Score agent traces, run experiments against datasets, and upload evaluation results
+- [Agent Evals](https://observability.opensearch.org/docs/agent-evals/): Measure the quality of your AI agents with OpenTelemetry evaluation events - score live traces, run offline test suites in CI, and review results in OpenSearch Dashboards
+- [Evaluation Data Model & Storage](https://observability.opensearch.org/docs/agent-evals/data-model/): The evaluation event contract (gen_ai.evaluation.result, opensearch.test_case.result, opensearch.test_suite_run.result), the otel-v1-genai-evaluation index, derived fields, and the evaluations dataset
 - [Evaluation Integrations](https://observability.opensearch.org/docs/agent-evals/evaluation-integrations/): Bridge external evaluation frameworks like DeepEval, RAGAS, MLflow, and pytest into the observability stack
+- [Evaluations UI](https://observability.opensearch.org/docs/agent-evals/evaluations-ui/): Review agent evaluation results in OpenSearch Dashboards: Overview, Results, Evaluation runs, Compare, drill-downs, and evaluations in Agent Traces
+- [Instrument Evaluations](https://observability.opensearch.org/docs/agent-evals/instrumenting/): Emit agent evaluation results with the OpenSearch GenAI SDKs: score(), @scorer and defineScorer, evaluate(), Benchmark, and the traces and logs endpoints
+- [Offline Runs & CI](https://observability.opensearch.org/docs/agent-evals/offline-runs-ci/): Run an agent evaluation suite on every pull request with the GitHub Action, link the run in OpenSearch Dashboards, and fail the job on a score regression
+- [Agent Evals Quickstart](https://observability.opensearch.org/docs/agent-evals/quickstart/): Run your first agent evaluation: start the stack, run a sample test suite with a mock agent, and open the run in OpenSearch Dashboards
+- [Agent Evals Troubleshooting & Limits](https://observability.opensearch.org/docs/agent-evals/troubleshooting/): Fix missing evaluation results, neutral Scored verdicts, and unlinked runs, and know the mapping, paging, and retention limits of agent evaluations
 
 ## Agent Health
 
@@ -35,10 +40,10 @@
 
 - [Alerting Overview](https://observability.opensearch.org/docs/alerting/): Alert on your logs, traces, and metrics — how alerting works, and where to go next
 - [Notifications](https://observability.opensearch.org/docs/alerting/notifications/): Deliver firing alerts to Slack, email, PagerDuty, and webhooks — for both OpenSearch and Prometheus rules
-- [Unified Alerts View](https://observability.opensearch.org/docs/alerting/unified-alerts/): One place to see every alert and create log and metric rules — OpenSearch monitors and Prometheus alerts together
+- [Unified Alerts View](https://observability.opensearch.org/docs/alerting/unified-alerts/): Create and manage alerting rules, anomaly detectors, and forecasters, and investigate alerts and anomalies in one view
 - [Create Rules](https://observability.opensearch.org/docs/alerting/unified-alerts/create-rules/): Build log rules (PPL) and metric rules (PromQL) in the Unified Alerts View
-- [Explore Alerts](https://observability.opensearch.org/docs/alerting/unified-alerts/explore-alerts/): Triage firing alerts in the Alerts tab — filter, read the alert timeline, and scope data sources
-- [Explore Rules](https://observability.opensearch.org/docs/alerting/unified-alerts/explore-rules/): Browse the rules catalog — inspect definitions by type, status, and health
+- [Explore Alerts](https://observability.opensearch.org/docs/alerting/unified-alerts/explore-alerts/): Triage firing alerts and detected anomalies in the Alerts tab
+- [Explore Rules](https://observability.opensearch.org/docs/alerting/unified-alerts/explore-rules/): Browse and manage alerting rules, anomaly detectors, and forecasters
 - [Routing](https://observability.opensearch.org/docs/alerting/unified-alerts/routing/): View the live Prometheus Alertmanager route tree and receivers for the Prometheus data source
 
 ## Anomaly Detection
@@ -104,6 +109,7 @@
 - [Platform Overview](https://observability.opensearch.org/docs/get-started/overview/): Architecture and data flow overview for OpenSearch Observability Stack
 - [Create Your First Dashboard](https://observability.opensearch.org/docs/get-started/quickstart/first-dashboard/): Build your first observability dashboard in OpenSearch Dashboards
 - [Ingest Your First Traces](https://observability.opensearch.org/docs/get-started/quickstart/first-traces/): Instrument your application to send traces to the Observability Stack
+- [Sending Data from the OpenTelemetry Demo to the Observability Stack](https://observability.opensearch.org/docs/get-started/quickstart/otel-demo/): Run the OpenTelemetry Demo (Astronomy Shop) against Observability Stack and explore its logs, traces, and metrics in OpenSearch Dashboards.
 
 ## Discover
 
@@ -154,6 +160,7 @@
 - [PPL for DQL/Lucene Users](https://observability.opensearch.org/docs/ppl/dql-lucene-users/): A transition guide for users familiar with DQL or Lucene query syntax - the only difference is : becomes = and you gain a full pipeline after the filter.
 - [PPL Observability Examples](https://observability.opensearch.org/docs/ppl/examples/): Real-world PPL queries for OpenTelemetry logs, traces, and AI agent observability - with live playground links to try each query instantly.
 - [PPL Function Reference](https://observability.opensearch.org/docs/ppl/functions/): Complete reference for PPL built-in functions - aggregations, string manipulation, date/time, math, conditionals, JSON, IP, collections, and more.
+- [PPL Inspect Query](https://observability.opensearch.org/docs/ppl/inspect-query/): Inspect how OpenSearch ran a PPL query: per-phase timing, a per-operator execution, and rule-based optimization recommendations.
 - [PPL for SPL Users](https://observability.opensearch.org/docs/ppl/spl-users/): A transition guide for users familiar with Splunk Search Processing Language (SPL) - learn the PPL equivalents for the commands and patterns you already know.
 
 ## Send Data
@@ -162,7 +169,7 @@
 - [AI Agents](https://observability.opensearch.org/docs/send-data/ai-agents/): Instrument AI agent applications with the GenAI Observability SDKs
 - [Integrations](https://observability.opensearch.org/docs/send-data/ai-agents/integrations/): Instrument popular AI agent frameworks with the GenAI Observability SDK
 - [Python SDK](https://observability.opensearch.org/docs/send-data/ai-agents/python/): Reference for opensearch-genai-observability-sdk-py - instrument AI agent applications with OpenTelemetry
-- [TypeScript SDK](https://observability.opensearch.org/docs/send-data/ai-agents/typescript/): Instrument TypeScript AI agent applications with the GenAI Observability SDK
+- [TypeScript SDK](https://observability.opensearch.org/docs/send-data/ai-agents/typescript/): Reference for @opensearch-project/genai-observability-sdk-ts - instrument TypeScript AI agent applications with OpenTelemetry
 - [Instrument Applications](https://observability.opensearch.org/docs/send-data/applications/): Add OpenTelemetry instrumentation to your application code to send traces, metrics, and logs to the observability stack
 - [Browser / Frontend](https://observability.opensearch.org/docs/send-data/applications/browser/): Add real user monitoring to web applications with OpenTelemetry for browser-side traces and metrics
 - [.NET](https://observability.opensearch.org/docs/send-data/applications/dotnet/): Instrument .NET applications with OpenTelemetry to send traces, metrics, and logs to the observability stack
@@ -189,6 +196,7 @@
 - [OpenTelemetry](https://observability.opensearch.org/docs/send-data/opentelemetry/): Understand OpenTelemetry signals, protocols, and how OTel integrates with the observability stack
 - [Auto-Instrumentation](https://observability.opensearch.org/docs/send-data/opentelemetry/auto-instrumentation/): Zero-code instrumentation for popular frameworks and languages using OpenTelemetry agents
 - [OTel Collector Configuration](https://observability.opensearch.org/docs/send-data/opentelemetry/collector/): Configure the OpenTelemetry Collector pipeline for traces, metrics, and logs
+- [eBPF Instrumentation (OBI)](https://observability.opensearch.org/docs/send-data/opentelemetry/ebpf-instrumentation/): Collect traces and RED metrics from unmodified services with OpenTelemetry eBPF Instrumentation, and get them on the Application Map
 - [Manual Instrumentation](https://observability.opensearch.org/docs/send-data/opentelemetry/manual-instrumentation/): Add custom spans, metrics, and logs with the OpenTelemetry SDK
 - [Sampling Strategies](https://observability.opensearch.org/docs/send-data/opentelemetry/sampling/): Control telemetry volume with head-based and tail-based sampling
 

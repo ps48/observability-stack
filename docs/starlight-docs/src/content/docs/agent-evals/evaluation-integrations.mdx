@@ -5,10 +5,12 @@ description: "Bridge external evaluation frameworks like DeepEval, RAGAS, MLflow
 
 import { Aside } from '@astrojs/starlight/components';
 
-The `Benchmark` class bridges any evaluation framework into the observability stack. Run your evaluations with your preferred tool, then upload the results as OTel spans so everything is queryable in one place.
+The `Benchmark` class bridges any evaluation framework into the observability stack. Run your evaluations with your preferred tool, then upload the results as an evaluation run. Each `log()` call becomes one `opensearch.test_case.result` event and one `gen_ai.evaluation.result` event per score, and closing the benchmark emits the run event. The run then appears in **Agent Monitoring > Evaluations** next to runs from `evaluate()`. `Benchmark` creates no spans. Pass `trace_id` and `span_id` to `log()` to link a case to an agent trace you recorded.
+
+The examples below call the framework's own LLM judge or model, so they need that provider's API key. Every score is uploaded as a plain value. To get pass/fail verdicts instead of "Scored", pass a list of `EvalScore(name=..., value=..., threshold=...)` as `scores` (see [Declaring verdicts](/docs/agent-evals/instrumenting/#declaring-verdicts)).
 
 <Aside type="note">
-Third-party framework APIs change frequently. The examples below show the integration pattern — adapt imports and method calls to your installed version. The SDK side (`Benchmark`, `b.log()`, `evaluate()`, `EvalScore`) is stable.
+Third-party framework APIs change frequently. The examples below show the integration pattern — adapt imports and method calls to your installed version. The SDK side (`Benchmark`, `b.log()`, `evaluate()`, `EvalScore`) is the same for every framework.
 </Aside>
 
 ---
@@ -26,7 +28,7 @@ from opensearch_genai_observability_sdk_py import register, Benchmark
 from deepeval.metrics import AnswerRelevancyMetric, FaithfulnessMetric
 from deepeval.test_case import LLMTestCase
 
-register(service_name="deepeval-eval")
+register(endpoint="http://localhost:4318/v1/traces", service_name="deepeval-eval")
 
 # Define your test cases
 test_cases = [
@@ -90,7 +92,7 @@ from ragas import evaluate as ragas_evaluate
 from ragas.metrics import faithfulness, answer_correctness, context_precision
 from datasets import Dataset
 
-register(service_name="ragas-eval")
+register(endpoint="http://localhost:4318/v1/traces", service_name="ragas-eval")
 
 # Prepare your RAG evaluation dataset
 data = {
@@ -148,7 +150,7 @@ from opensearch_genai_observability_sdk_py import register, Benchmark
 import mlflow
 import pandas as pd
 
-register(service_name="mlflow-eval")
+register(endpoint="http://localhost:4318/v1/traces", service_name="mlflow-eval")
 
 # Prepare evaluation data as a DataFrame
 eval_df = pd.DataFrame([
@@ -201,7 +203,7 @@ from opensearch_genai_observability_sdk_py import register
 
 @pytest.fixture(scope="session", autouse=True)
 def _init_tracing():
-    register(service_name="pytest-eval")
+    register(endpoint="http://localhost:4318/v1/traces", service_name="pytest-eval")
 ```
 
 ```python
@@ -213,7 +215,7 @@ def accuracy_scorer(input, output, expected) -> EvalScore:
     return EvalScore(
         name="accuracy",
         value=1.0 if is_correct else 0.0,
-        label="pass" if is_correct else "fail",
+        threshold=1,  # declares the pass rule: the case fails when accuracy < 1
     )
 
 def response_length_scorer(input, output, expected) -> EvalScore:
@@ -229,7 +231,7 @@ def test_agent_quality():
         task=my_agent,
         data=[
             {"input": "What is OpenSearch?", "expected": "search"},
-            {"input": "What is OTEL?", "expected": "opentelemetry"},
+            {"input": "What is OTEL?", "expected": "otel"},
         ],
         scores=[accuracy_scorer, response_length_scorer],
     )
@@ -237,11 +239,12 @@ def test_agent_quality():
     assert avg_accuracy >= 0.8, f"Accuracy dropped to {avg_accuracy}"
 ```
 
-Run with: `pytest test_agent.py` — results are recorded as OTel benchmark spans and available in OpenSearch Dashboards.
+Run with `pytest test_agent.py`. The run is recorded as evaluation events (the agent's own traces plus case, score, and run events) and shows under **Evaluation runs** in OpenSearch Dashboards. Declaring `threshold` on the scorer also gives each case a pass/fail status. To run it on every pull request, see [Offline runs & CI](/docs/agent-evals/offline-runs-ci/).
 
 ---
 
 ## Related links
 
-- [Evaluation & Scoring](/docs/agent-evals/evaluation/) - core `score()`, `evaluate()`, `Benchmark` API
+- [Instrument evaluations](/docs/agent-evals/instrumenting/) - `score()`, `@scorer`, `evaluate()`, `Benchmark`
+- [Data model & storage](/docs/agent-evals/data-model/) - the events these uploads produce
 - [Python SDK reference](/docs/send-data/ai-agents/python/) - full SDK documentation

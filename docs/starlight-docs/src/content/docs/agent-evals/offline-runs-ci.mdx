@@ -1,0 +1,199 @@
+---
+title: "Offline Runs & CI"
+description: "Run an agent evaluation suite on every pull request with the GitHub Action, link the run in OpenSearch Dashboards, and fail the job on a score regression"
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+An **offline run** evaluates the agent against a fixed set of test cases (a suite), so that two runs are directly comparable. Run the suite on every pull request to catch a regression before it merges. Then open the run, or compare it with the main branch's last run, in **Agent Monitoring > Evaluations**.
+
+## What a run records
+
+For every test case, `evaluate()` (or `Benchmark`) records:
+
+- **The agent's own trace** (from `evaluate()` only). Its root span is stamped with `test.suite.name`, `test.suite.run.id`, `test.case.id`, and `test.case.name`. No harness spans are added.
+- **One `gen_ai.evaluation.result` event per score**, parented to the agent's root span, with the `test.*` ids copied.
+- **One `opensearch.test_case.result` event**, with these attributes:
+  - the case status, `test.case.result.status`: `pass`, `fail`, or `error`
+  - `error.type` when the agent or a scorer raised
+  - `opensearch.test_case.duration_ms`
+  - `opensearch.test_case.input`, `.expected`, and `.output` when `record_io=True`
+  - the run metadata
+
+At the end of the run, it records **one `opensearch.test_suite_run.result` event** (no trace context). It carries `test.suite.run.status` (`success` unless a case errored), the case, pass, fail, and error counts, the duration, and the run metadata.
+
+Keep `name` (the suite) stable across runs and give each test case a stable `case_id`. Runs are compared by suite, and test cases are matched by id.
+
+<Aside type="tip">
+Put identifying metadata on the run: `metadata={"agent.version": "...", "agent.model": "...", "vcs.ref.head.revision": os.environ.get("GITHUB_SHA", "local")}`. The Evaluation runs table shows the agent version and model, and Compare lists their changes.
+</Aside>
+
+## GitHub Action
+
+The Python SDK repository ships a reusable composite action under [`examples/github-action/`](https://github.com/opensearch-project/genai-observability-sdk-py/tree/main/examples/github-action). It does the following:
+
+- installs the SDK and calls `register()` with your endpoints
+- runs your suite and flushes traces and evaluation events
+- writes a job summary with a link to the run in OpenSearch Dashboards, plus a table of evaluator means and pass/fail counts
+- fails the job when an evaluator's mean drops below a minimum you set
+
+<Aside type="caution" title="Preview">
+The action ships with the same unreleased SDK change as the evaluation events. Until it is on the SDK's `main` branch, copy the `examples/github-action/` directory into your repository and reference it as `uses: ./.github/actions/agent-evals`.
+</Aside>
+
+<Steps>
+
+1. **Write a suite**
+
+    A suite is a function with no arguments that calls `evaluate()` and returns its result (or a list of results). Don't call `register()` in it: the action configures telemetry before it imports the file.
+
+    ```python
+    # evals/suite.py
+    from opensearch_genai_observability_sdk_py import Op, evaluate, observe, scorer
+
+    ANSWERS = {
+        "Capital of France?": "Paris is the capital of France.",
+        "Who wrote Hamlet?": "I am not sure.",
+    }
+
+
+    @observe(name="mock_agent", op=Op.INVOKE_AGENT)
+    def agent(question: str) -> str:
+        return ANSWERS.get(question, "I don't know.")  # replace with your agent
+
+
+    @scorer(name="contains_expected", threshold=1, evaluator_type="code")
+    def contains_expected(input, output, expected) -> float:
+        return 1.0 if expected.lower() in output.lower() else 0.0
+
+
+    def suite():
+        # No register() here: the action configures the endpoints before importing this file.
+        return evaluate(
+            name="my-agent-suite",
+            task=agent,
+            data=[
+                {"case_id": "france", "input": "Capital of France?", "expected": "Paris"},
+                {"case_id": "hamlet", "input": "Who wrote Hamlet?", "expected": "Shakespeare"},
+            ],
+            scores=[contains_expected],
+            record_io=True,
+        )
+    ```
+
+2. **Try it locally**
+
+    The action's script reads the same settings from flags (or `EVAL_*` environment variables). From a checkout of the SDK repository, run it against the stack's collector:
+
+    ```bash
+    python examples/github-action/run_suite.py \
+      --suite path/to/evals/suite.py:suite \
+      --traces-endpoint http://localhost:4318/v1/traces \
+      --logs-endpoint http://localhost:4318/v1/logs \
+      --service-name my-agent-local \
+      --dashboards-url http://localhost:5601 \
+      --fail-on-regression "contains_expected=0.75"
+    ```
+
+    It prints the summary that the action writes to the job page, then exits with code 1 because `contains_expected` averages 0.5:
+
+    ```text
+    ## Agent evaluation results
+
+    - **my-agent-suite** run `run_20261030_001922_b91e7118`: [open in OpenSearch Dashboards](http://localhost:5601/app/agentTraces/evaluations#/?_a=(tab:runs,run:'run_20261030_001922_b91e7118'))
+      - cases: 2 (pass 1, fail 1, error 0), duration 0.0s
+
+    | Evaluator | Mean | Pass (>= 0.5) | Fail | Scores | Threshold |
+    |---|---:|---:|---:|---:|---|
+    | `contains_expected` | 0.500 | 1 | 1 | 2 | FAIL (min 0.75) |
+
+    **Regression check failed:**
+
+    - `contains_expected`: mean 0.500 is below 0.75
+    ```
+
+3. **Add the workflow**
+
+    Your CI runner must reach an OTLP endpoint of your stack: the OTel Collector on port 4318, or a gateway in front of it. Store the URLs as repository secrets or variables:
+
+    ```yaml
+    # .github/workflows/agent-evals.yml
+    name: Agent evals
+
+    on:
+      pull_request:
+      workflow_dispatch:
+
+    permissions:
+      contents: read
+
+    jobs:
+      evals:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v6
+          - uses: actions/setup-python@v6
+            with:
+              python-version: "3.12"
+
+          - name: Install your agent
+            run: python -m pip install -e .
+
+          - name: Run evals
+            id: evals
+            # Pin to a commit SHA of the SDK repository in real use.
+            uses: opensearch-project/genai-observability-sdk-py/examples/github-action@main
+            with:
+              suite: evals/suite.py:suite
+              traces-endpoint: ${{ secrets.OTLP_TRACES_ENDPOINT }} # https://<collector>/v1/traces
+              logs-endpoint: ${{ secrets.OTLP_LOGS_ENDPOINT }}     # https://<collector>/v1/logs
+              install: opensearch-genai-observability-sdk-py
+              service-name: my-agent-ci
+              dashboards-url: ${{ vars.OPENSEARCH_DASHBOARDS_URL }}
+              fail-on-regression: |
+                contains_expected=0.75
+    ```
+
+    If your collector requires authentication, set `OTEL_EXPORTER_OTLP_HEADERS` (for example `Authorization=Bearer ...`) in the step's `env`.
+
+</Steps>
+
+### Inputs and outputs
+
+| Input | Default | Description |
+|---|---|---|
+| `suite` (required) | | `module:function` or `path/to/file.py:function` |
+| `traces-endpoint` | | OTLP traces URL |
+| `logs-endpoint` | | OTLP logs URL for evaluation events |
+| `service-name` | `agent-evals-ci` | `service.name` of the run |
+| `dashboards-url` | | OpenSearch Dashboards base URL, used for the run link |
+| `fail-on-regression` | | `evaluator=min_mean` pairs, comma or newline separated |
+| `pass-threshold` | `0.5` | Value counted as pass in the summary table |
+| `working-directory` | `.` | Directory the suite runs from (added to `sys.path`) |
+| `install` | `opensearch-genai-observability-sdk-py[aws]` | pip requirements installed first |
+
+The action has two outputs. `run-id` is the run's `test.suite.run.id`. `run-url` is a link to the run page:
+
+```text
+<dashboards-url>/app/agentTraces/evaluations#/?_a=(tab:runs,run:'<test.suite.run.id>')
+```
+
+The job fails with exit code 1 when an evaluator mean is below its minimum, or when a gated evaluator produced no scores. Exit code 2 means a configuration error.
+
+<Aside type="note">
+The summary table's "Pass" column counts `value >= pass-threshold` for a quick read in the job page. The verdicts in OpenSearch Dashboards come from the rules each scorer declares (see [Verdict rules](/docs/agent-evals/#verdict-rules)), so declare thresholds on your scorers too.
+</Aside>
+
+## Comparing with a baseline
+
+After a pull request run, open its link. On the run page, choose **Compare with previous run**, or **Compare with...** to pick a specific baseline such as the last main-branch run. Compare shows the following:
+
+- pass rate and evaluator means against the baseline
+- how many test cases improved, regressed, or stayed the same
+- for each test case, a step-by-step comparison of the two agent traces
+
+See [Evaluations UI](/docs/agent-evals/evaluations-ui/#compare-runs).
+
+## Other runners
+
+`run_suite.py` only needs Python and network access to the OTLP endpoints, so it runs the same way in any CI system. Run `evaluate()` directly in a pytest test and assert on `result.summary`, as shown in [Evaluation integrations](/docs/agent-evals/evaluation-integrations/#pytest).

@@ -67,9 +67,9 @@ flowchart LR
 | **Trace agents & tools** | `@observe` | Decorator/context manager that creates spans with GenAI semantic attributes |
 | **Enrich spans** | `enrich()` | Sets model, tokens, provider, session ID, and other GenAI attributes on the active span |
 | **Auto-instrument LLMs** | `register(auto_instrument=True)` | OpenAI, Anthropic, Bedrock, LangChain, and 20+ libraries traced automatically |
-| **Score traces** | `score()` | Attaches evaluation scores to traces through the OTLP pipeline |
-| **Run experiments** | `evaluate()` | Runs a task against a dataset with scorer functions, records everything as OTel spans |
-| **Upload results** | `Benchmark` | Uploads pre-computed eval results from RAGAS, DeepEval, pytest, or custom frameworks |
+| **Score traces** | `score()` | Records evaluation results as OTel log events (`gen_ai.evaluation.result`) linked to the evaluated span |
+| **Run experiments** | `evaluate()` | Runs a task against a dataset with scorer functions; each case is its own trace, plus case and run events |
+| **Upload results** | `Benchmark` | Uploads pre-computed eval results from RAGAS, DeepEval, pytest, or custom frameworks as the same events |
 | **Query traces** | `OpenSearchTraceRetriever` | Retrieves stored traces from OpenSearch for evaluation pipelines |
 | **AWS production** | `AWSSigV4OTLPExporter` | SigV4-signed exports to OpenSearch Ingestion or OpenSearch Service |
 
@@ -162,11 +162,12 @@ flowchart LR
         value=0.95,
         trace_id="<trace-id-from-dashboards>",
         label="relevant",
+        threshold=0.8,  # declares the pass rule, so the result shows as Pass or Fail
         explanation="Answer correctly references OpenSearch documentation",
     )
     ```
 
-    Scores appear as evaluation spans in the same trace, queryable alongside the agent spans.
+    The score is an OTel log event (`gen_ai.evaluation.result`) linked to the trace. It is stored in `otel-v1-genai-evaluation-*` and shown in the trace's **Evaluations** tab and in **Agent Monitoring > Evaluations**.
 
 6. **Run an experiment** (optional)
 
@@ -177,7 +178,7 @@ flowchart LR
 
     def relevance_scorer(input, output, expected) -> EvalScore:
         is_match = expected.lower() in output.lower()
-        return EvalScore(name="relevance", value=1.0 if is_match else 0.0)
+        return EvalScore(name="relevance", value=1.0 if is_match else 0.0, threshold=1)
 
     result = evaluate(
         name="my_agent_v1",
@@ -190,6 +191,8 @@ flowchart LR
     )
     print(result.summary)  # avg, min, max per metric
     ```
+
+    The run appears under **Agent Monitoring > Evaluations > Evaluation runs**. See the [Agent Evals quickstart](/docs/agent-evals/quickstart/).
 
 </Steps>
 
@@ -211,6 +214,6 @@ Exporter ports differ by framework: the OpenTelemetry SDK examples send over gRP
 ## What's next
 
 - [Python SDK reference](/docs/send-data/ai-agents/python/) - full API documentation for `register`, `observe`, `enrich`, and AWS auth
-- [Evaluation & Scoring](/docs/agent-evals/evaluation/) - `score()`, `evaluate()`, `Benchmark`, and `OpenSearchTraceRetriever` in depth
+- [Agent Evals](/docs/agent-evals/) - `score()`, `evaluate()`, `Benchmark`, verdicts, CI runs, and the Evaluations UI
 - [Agent Tracing UI](/docs/ai-observability/agent-tracing/) - explore traces, graphs, and timelines in OpenSearch Dashboards
 - [Agent Health](/docs/agent-health/) - evaluate agents with Golden Path comparison, LLM judges, and batch experiments

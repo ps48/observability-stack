@@ -15,7 +15,7 @@ The GenAI SDKs add:
 - **`@observe` decorator** - trace agents, tools, and LLM calls with GenAI semantic convention attributes automatically
 - **`enrich()`** - set model, tokens, provider, and other GenAI attributes on the active span without manual `set_attribute()` calls
 - **Auto-instrumentation** - OpenAI, Anthropic, Bedrock, LangChain, and 20+ libraries traced with zero code changes
-- **Evaluation scoring** - `score()` attaches quality metrics to traces through the same OTLP pipeline
+- **Evaluation scoring** - `score()` and `evaluate()` emit evaluation results as OTel log events that join the traces they judge
 - **AWS SigV4** - production-ready signing for OpenSearch Ingestion and OpenSearch Service
 
 ## Available SDKs
@@ -50,4 +50,4 @@ This produces a trace with `gen_ai.operation.name`, `gen_ai.agent.name`, `gen_ai
 - [Python SDK reference](/docs/send-data/ai-agents/python/) - full API documentation
 - [TypeScript SDK reference](/docs/send-data/ai-agents/typescript/) - full API documentation
 - [AI Observability - Getting Started](/docs/ai-observability/getting-started/) - end-to-end walkthrough from install to seeing traces
-- [Evaluation & Scoring](/docs/agent-evals/evaluation/) - score traces, run experiments, compare agent versions
+- [Agent Evals](/docs/agent-evals/) - score traces, run offline evaluation runs, compare agent versions

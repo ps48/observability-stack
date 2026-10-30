@@ -1,0 +1,160 @@
+---
+title: "Agent Evals Quickstart"
+description: "Run your first agent evaluation: start the stack, run a sample test suite with a mock agent, and open the run in OpenSearch Dashboards"
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+
+This quickstart runs an offline evaluation run end to end. The suite uses a deterministic mock agent and code scorers, so you don't need a model API key. At the end you have four agent traces, eight evaluation results with pass/fail verdicts, and one evaluation run that you can open in OpenSearch Dashboards.
+
+<Aside type="caution" title="Preview feature">
+Agent Evals needs a Python SDK release later than `opensearch-genai-observability-sdk-py` 0.2.8, which is the first one that emits evaluation results as log events. It also needs an OpenSearch Dashboards build that includes **Agent Monitoring > Evaluations**. Until those are released, install the SDK from source and use a Dashboards build that has the Evaluations pages.
+</Aside>
+
+## Prerequisites
+
+- Docker with Docker Compose
+- Python 3.10+
+
+<Steps>
+
+1. **Start the observability stack**
+
+    ```bash
+    git clone https://github.com/opensearch-project/observability-stack.git
+    cd observability-stack
+    docker compose up -d
+    ```
+
+    The stack does three things for evaluations:
+
+    - Data Prepper routes evaluation events to the `otel-v1-genai-evaluation-*` indices.
+    - The init job creates the **Evaluation Dataset - Local Cluster** dataset.
+    - The init job also creates the Agent Evaluations app config that points the Evaluations pages at that dataset.
+
+    For details, see [Data model & storage](/docs/agent-evals/data-model/).
+
+2. **Install the SDK**
+
+    ```bash
+    python -m venv .venv && source .venv/bin/activate
+    pip install opensearch-genai-observability-sdk-py
+    ```
+
+3. **Write a sample suite**
+
+    Save this as `quickstart_evals.py`. It traces a mock agent and declares a pass rule for each scorer, so each result gets a verdict instead of a neutral "Scored". It then runs the agent on four test cases. The last test case fails on purpose.
+
+    ```python
+    """Agent evaluations quickstart: a mock agent, two scorers, one offline run."""
+    from opensearch_genai_observability_sdk_py import Op, evaluate, observe, register, scorer
+
+    # Traces go to /v1/traces, evaluation events to /v1/logs on the same collector.
+    provider = register(
+        endpoint="http://localhost:4318/v1/traces",
+        service_name="quickstart-agent",
+    )
+
+    ANSWERS = {
+        "What is OpenSearch?": "OpenSearch is an open source search and analytics suite.",
+        "What does OTLP stand for?": "OpenTelemetry Protocol.",
+        "Capital of France?": "Paris is the capital of France.",
+        "Who wrote Hamlet?": "I am not sure.",
+    }
+
+
+    @observe(name="mock_agent", op=Op.INVOKE_AGENT)
+    def mock_agent(question: str) -> str:
+        """Deterministic stand-in for a real agent: no model, no API key."""
+        return ANSWERS.get(question, "I don't know.")
+
+
+    @scorer(name="contains_expected", threshold=1, evaluator_type="code")
+    def contains_expected(input, output, expected) -> float:
+        # 1.0 when the expected text is in the answer; passes at 1 or more.
+        return 1.0 if expected.lower() in output.lower() else 0.0
+
+
+    @scorer(name="answer_length", threshold=0.5, score_min=0, score_max=1, evaluator_type="code")
+    def answer_length(input, output, expected) -> float:
+        # Toy quality score in [0, 1]; passes at 0.5 or more.
+        return min(len(output) / 40.0, 1.0)
+
+
+    evaluate(
+        name="quickstart-suite",
+        task=mock_agent,
+        data=[
+            {"case_id": "opensearch", "input": "What is OpenSearch?", "expected": "search"},
+            {"case_id": "otlp", "input": "What does OTLP stand for?", "expected": "OpenTelemetry"},
+            {"case_id": "france", "input": "Capital of France?", "expected": "Paris"},
+            {"case_id": "hamlet", "input": "Who wrote Hamlet?", "expected": "Shakespeare"},
+        ],
+        scores=[contains_expected, answer_length],
+        metadata={"agent.version": "v1"},
+        record_io=True,
+    )
+
+    provider.force_flush()  # flush spans and evaluation events before exit
+    ```
+
+4. **Run it**
+
+    ```bash
+    python quickstart_evals.py
+    ```
+
+    `evaluate()` prints a summary with the run id:
+
+    ```text
+    ============================================================
+      BENCHMARK: quickstart-suite
+      Run: run_20261030_001343_34d64814 | Cases: 4 | Errors: 0 | Duration: 0.0s
+
+      contains_expected    avg=0.75  min=0.00  max=1.00  (n=4)
+      answer_length        avg=0.68  min=0.35  max=1.00  (n=4)
+    ============================================================
+    ```
+
+    The run sends the following:
+
+    - 4 agent traces (`invoke_agent mock_agent`), each root span stamped with `test.suite.name`, `test.suite.run.id`, and `test.case.id`.
+    - 8 `gen_ai.evaluation.result` events, one per score, each parented to its agent's root span.
+    - 4 `opensearch.test_case.result` events. The `hamlet` case has status `fail`.
+    - 1 `opensearch.test_suite_run.result` event with the case counts.
+
+5. **Check the events in OpenSearch** (optional)
+
+    Data Prepper batches writes, so results show up within about 30 seconds:
+
+    ```bash
+    curl -sk -u 'admin:My_password_123!@#' \
+      "https://localhost:9200/otel-v1-genai-evaluation-*/_search?size=0" \
+      -H 'Content-Type: application/json' \
+      -d '{"query":{"term":{"attributes.test.suite.name":"quickstart-suite"}},
+           "aggs":{"events":{"terms":{"field":"eventName"}}}}'
+    ```
+
+    You should see three `eventName` buckets: `gen_ai.evaluation.result` (8), `opensearch.test_case.result` (4), and `opensearch.test_suite_run.result` (1). If you run the script more than once, the counts add up.
+
+6. **Open the run in OpenSearch Dashboards**
+
+    Open [http://localhost:5601](http://localhost:5601) (`admin` / `My_password_123!@#`) and go to **Agent Monitoring > Evaluations**:
+
+    - **Evaluation runs** lists `quickstart-suite` with 3 of 4 test cases passed. Select the run to see its scores by test case, and the failing `hamlet` case with its input, expected, and output.
+    - **Overview** shows `contains_expected` and `answer_length` with a 75% pass rate each.
+    - Select **Open trace** on a test case to jump to the agent trace in Agent Traces. Its **Evaluations** tab lists the results for that trace.
+
+    The Evaluation runs tab defaults to the last 7 days. Overview and Results use the global time range, so widen it if your run is older than the default 15 minutes.
+
+7. **Run it again and compare**
+
+    Edit `ANSWERS` so that `"Who wrote Hamlet?"` returns `"William Shakespeare wrote Hamlet."`, change `metadata` to `{"agent.version": "v2"}`, and run the script again. In **Evaluation runs**, select both runs and choose **Compare**. The new run shows one improved test case and a higher pass rate against the baseline. See [Evaluations UI](/docs/agent-evals/evaluations-ui/#compare-runs).
+
+</Steps>
+
+## Next steps
+
+- Score your real agent: [Instrument evaluations](/docs/agent-evals/instrumenting/).
+- Run the suite on every pull request: [Offline runs & CI](/docs/agent-evals/offline-runs-ci/).
+- Score live traffic continuously: the stack's eval canary (`docker-compose/agent-eval-canary/`) scores recent agent traces with four deterministic checks. It is included with the example services.

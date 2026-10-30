@@ -33,7 +33,7 @@ pip install "opensearch-genai-observability-sdk-py[all]"                 # every
 
 ## API overview
 
-The SDK exports these functions and classes. This page covers the instrumentation APIs. Evaluation APIs are documented in [Evaluation & Scoring](/docs/agent-evals/evaluation/).
+The SDK exports these functions and classes. This page covers the instrumentation APIs. Evaluation APIs are documented in [Instrument evaluations](/docs/agent-evals/instrumenting/).
 
 | Export | Purpose | Docs |
 |---|---|---|
@@ -41,16 +41,14 @@ The SDK exports these functions and classes. This page covers the instrumentatio
 | `observe()` | Trace agents, tools, LLM calls | [This page](#observe) |
 | `Op` | Operation name constants | [This page](#op-constants) |
 | `enrich()` | Set GenAI attributes on active span | [This page](#enrich) |
-| `score()` | Attach evaluation scores to traces | [This page](#score) |
+| `score()` | Record an evaluation result for a span, trace, or session | [This page](#score) |
 | `AWSSigV4OTLPExporter` | SigV4-signed OTLP exporter | [This page](#aws-authentication) |
-| `evaluate()` | Run agent against dataset with scorers | [Evaluation & Scoring](/docs/agent-evals/evaluation/#evaluate---run-experiments) |
-| `Benchmark` | Upload pre-computed eval results | [Evaluation & Scoring](/docs/agent-evals/evaluation/#benchmark---upload-pre-computed-results) |
-| `EvalScore` | Scorer return type | [Evaluation & Scoring](/docs/agent-evals/evaluation/#evalscore-dataclass) |
-| `BenchmarkResult` | Result from `evaluate()` | [Evaluation & Scoring](/docs/agent-evals/evaluation/#result-types) |
-| `BenchmarkSummary` | Aggregate score statistics | [Evaluation & Scoring](/docs/agent-evals/evaluation/#result-types) |
-| `TestCaseResult` | Per-case result | [Evaluation & Scoring](/docs/agent-evals/evaluation/#result-types) |
-| `ScoreSummary` | Per-metric statistics | [Evaluation & Scoring](/docs/agent-evals/evaluation/#result-types) |
-| `OpenSearchTraceRetriever` | Query stored traces from OpenSearch | [Evaluation & Scoring](/docs/agent-evals/evaluation/#opensearchtraceretriever---query-stored-traces) |
+| `evaluate()` | Run agent against dataset with scorers | [Instrument evaluations](/docs/agent-evals/instrumenting/#evaluate-an-offline-run) |
+| `scorer` | Declare a scorer's evaluation name and pass rule | [Instrument evaluations](/docs/agent-evals/instrumenting/#evaluate-an-offline-run) |
+| `Benchmark` | Upload pre-computed eval results | [Instrument evaluations](/docs/agent-evals/instrumenting/#benchmark-upload-existing-results) |
+| `EvalScore` | Scorer return type | [Instrument evaluations](/docs/agent-evals/instrumenting/#evaluate-an-offline-run) |
+| `BenchmarkResult`, `BenchmarkSummary`, `TestCaseResult`, `ScoreSummary` | Results returned by `evaluate()` | [SDK README](https://github.com/opensearch-project/genai-observability-sdk-py#evaluate) |
+| `OpenSearchTraceRetriever` | Query stored traces from OpenSearch | [Instrument evaluations](/docs/agent-evals/instrumenting/#scoring-stored-traces) |
 
 ## Quick start
 
@@ -288,32 +286,21 @@ register(auto_instrument=False)  # to disable
 
 ## `score()`
 
-Attaches an evaluation score to a trace or span. Scores are emitted as OTEL spans through the same OTLP pipeline - no separate client or index needed.
+Records one evaluation result as an OTel log event, `gen_ai.evaluation.result`, carrying the trace context of the evaluated span. It adds no span to the trace. The event is exported over OTLP logs (`/v1/logs`, set up by `register()`), and Data Prepper stores it in `otel-v1-genai-evaluation-*`.
 
 ```python
 from opensearch_genai_observability_sdk_py import score
 
-# Score an entire trace
-score(name="relevance", value=0.92, trace_id="abc123...",
-      explanation="Response addresses the user's query")
+# Score a specific span; the threshold declares the pass rule
+score(name="accuracy", value=0.95, trace_id="6ebb9835f43af1552f2cebb9f5165e39",
+      span_id="89829115c2128845", threshold=0.8, evaluator="accuracy_judge")
 
-# Score a specific span
-score(name="accuracy", value=0.95, trace_id="abc123...", span_id="def456...",
-      label="pass")
+# Score a whole trace with an explicit verdict
+score(name="task_success", value=1.0, trace_id="6ebb9835f43af1552f2cebb9f5165e39",
+      assessment="pass", explanation="Booked the requested flight")
 ```
 
-| Parameter | Type | Description |
-|---|---|---|
-| `name` | `str` | Metric name, e.g. `"relevance"`, `"factuality"`. |
-| `value` | `float` | Numeric score. |
-| `trace_id` | `str` | Hex trace ID to score. Omit for standalone scores. |
-| `span_id` | `str` | Hex span ID for span-level scoring. |
-| `label` | `str` | Human-readable label, e.g. `"pass"`. |
-| `explanation` | `str` | Evaluator rationale (truncated to 500 chars). |
-| `response_id` | `str` | LLM completion ID for correlation. |
-| `attributes` | `dict` | Additional span attributes. |
-
-For running evaluations at scale (`evaluate()`, `Benchmark`, `OpenSearchTraceRetriever`), see [Evaluation & Scoring](/docs/agent-evals/evaluation/).
+Without `threshold` or `assessment`, a result shows as "Scored" (no pass/fail). For all parameters, inline scoring, session-level results, `evaluate()`, `Benchmark`, and `OpenSearchTraceRetriever`, see [Instrument evaluations](/docs/agent-evals/instrumenting/).
 
 ---
 
@@ -345,7 +332,8 @@ SigV4 + gRPC is not supported. Use `https://` for AWS endpoints.
 | Variable | Description | Default |
 |---|---|---|
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | Full OTLP traces endpoint URL (used as-is) | |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Base OTLP endpoint URL (`/v1/traces` appended) | Data Prepper default |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Base OTLP endpoint URL (`/v1/traces` and `/v1/logs` appended) | Data Prepper default |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | Full OTLP logs URL for evaluation events (used as-is) | derived from the traces endpoint |
 | `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` | Protocol for traces (`http/protobuf`, `grpc`) | |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | Protocol for all signals (`http/protobuf`, `grpc`) | |
 | `OTEL_SERVICE_NAME` | Service name | `"default"` |
@@ -357,7 +345,7 @@ SigV4 + gRPC is not supported. Use `https://` for AWS endpoints.
 ## Related links
 
 - [AI Observability - Getting Started](/docs/ai-observability/getting-started/) - end-to-end walkthrough
-- [Evaluation & Scoring](/docs/agent-evals/evaluation/) - score traces, run experiments
-- [Trace Retrieval](/docs/agent-evals/evaluation/#opensearchtraceretriever---query-stored-traces) - query stored traces from OpenSearch
+- [Agent Evals](/docs/agent-evals/) - score traces, run offline evaluation runs, review results
+- [Scoring stored traces](/docs/agent-evals/instrumenting/#scoring-stored-traces) - query stored traces from OpenSearch
 - [Agent Traces](/docs/ai-observability/agent-tracing/) - viewing traces in OpenSearch Dashboards
 - [GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) - OTel spec reference
