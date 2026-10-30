@@ -100,9 +100,9 @@ This rebuilds any modified containers and restarts them with the new changes.
 ### Core Services
 
 - **otel-collector**: Receives OTLP telemetry data (ports 4317, 4318, 8888)
-- **data-prepper**: Processes logs and traces before OpenSearch ingestion (ports 21890, 21892)
+- **data-prepper**: Processes logs and traces before OpenSearch ingestion (ports 21890, 21892). Agent evaluation events (`gen_ai.evaluation.result`, `opensearch.test_case.result`, `opensearch.test_suite_run.result`) go to `otel-v1-genai-evaluation-*` instead of the logs index
 - **prometheus**: Stores metrics with OTLP receiver enabled (port 9090)
-- **opensearch-dashboards-init**: One-time initialization service that creates workspace, index patterns, and saved queries
+- **opensearch-dashboards-init**: One-time initialization service that creates workspace, index patterns (including the evaluations dataset), the APM and Agent Evaluations app configs, and saved queries
 
 ### Optional Services (local mode)
 

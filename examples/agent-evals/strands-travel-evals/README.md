@@ -3,7 +3,9 @@
 `travel_evals.py` runs a [Strands](https://strandsagents.com) travel agent on Amazon Bedrock and
 evaluates it with the OpenSearch GenAI Observability SDK. Every result is an OpenTelemetry
 `gen_ai.evaluation.result` log event. Data Prepper routes the events to `otel-v1-genai-evaluation-*`,
-where Agent Traces > Evaluations shows them next to the agent's traces.
+where Agent Traces > Evaluations shows them next to the agent's traces. The page reads that
+index from the "Evaluation Dataset - Local Cluster" dataset, which the stack's init names in
+the Agent Evaluations app config (`AgentEvals-Config-<workspace>`).
 
 | Mode | What it produces |
 |---|---|

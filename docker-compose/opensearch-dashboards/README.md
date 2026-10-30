@@ -13,8 +13,15 @@ Collection of saved queries that are automatically created during initialization
 ### `init/init-opensearch-dashboards.py`
 Python script that runs once during stack startup to:
 - Create the Observability Stack workspace
-- Create index patterns for logs, traces, and service maps
-- Set up APM correlation between traces and logs
+- Create index patterns for logs, traces, and service maps, and the
+  "Evaluation Dataset - Local Cluster" logs dataset over `otel-v1-genai-evaluation*`
+  (agent evaluation events)
+- Set up the trace-to-logs correlation and the APM config (`APM-Config-<workspace>`)
+- Create the Agent Evaluations app config (`AgentEvals-Config-<workspace>`, a `correlations`
+  saved object naming the traces and evaluations datasets). Agent Traces > Evaluations reads
+  its index from it; an existing config is kept, so a dataset chosen in the Evaluations
+  settings survives re-runs. `trace-to-evaluations-*` correlations from earlier versions are
+  removed.
 - Create Prometheus and OpenSearch datasources
 - Import the bundled Astronomy Shop dashboards
 - Optionally install the built-in Flights dataset and visualization samples
