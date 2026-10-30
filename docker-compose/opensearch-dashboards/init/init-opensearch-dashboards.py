@@ -910,8 +910,8 @@ def create_correlation(workspace_id, correlation_type, title, entities, referenc
 
     `prefix` is the correlationType prefix that marks an existing correlation of the same
     kind. By default it is the first two dash-separated words of the type ("APM-Config",
-    "trace-to"); pass it explicitly when two kinds share those words (trace-to-logs-* and
-    trace-to-evaluations-* both start with "trace-to").
+    "trace-to"); pass it explicitly to narrow the match ("trace-to-logs-" so another
+    trace-to-* kind is never taken for it).
     """
     if prefix is None:
         prefix = correlation_type.split("-")[0] + "-" + correlation_type.split("-")[1] if "-" in correlation_type else correlation_type
@@ -979,31 +979,6 @@ def create_trace_to_logs_correlation(workspace_id, traces_pattern_id, logs_patte
     )
 
 
-def create_trace_to_evaluations_correlation(workspace_id, traces_pattern_id, evaluations_pattern_id):
-    """Create the trace-to-evaluations correlation read by Agent Traces > Evaluations.
-
-    Links the traces dataset to the evaluations dataset (a logs dataset over the
-    gen_ai.evaluation.result / test case / test suite run events). The Agent Evaluations
-    page reads its index from this correlation, and the trace details flyout lists a
-    trace's evaluation events next to its correlated logs. Same shape as trace-to-logs,
-    with an `evaluationsDataset` entity in place of `logsDataset`.
-    """
-    return create_correlation(
-        workspace_id,
-        prefix="trace-to-evaluations-",
-        correlation_type="trace-to-evaluations-otel-v1-apm-span*",
-        title="trace-to-evaluations_otel-v1-apm-span*",
-        entities=[
-            {"tracesDataset": {"id": "references[0].id"}},
-            {"evaluationsDataset": {"id": "references[1].id"}},
-        ],
-        references=[
-            {"name": "entities[0].index", "type": "index-pattern", "id": traces_pattern_id},
-            {"name": "entities[1].index", "type": "index-pattern", "id": evaluations_pattern_id},
-        ],
-    )
-
-
 def create_apm_config_correlation(workspace_id, traces_pattern_id, service_map_pattern_id, prometheus_datasource_id):
     """Create APM config correlation that ties traces, service map, and Prometheus together"""
     if not prometheus_datasource_id:
@@ -1024,6 +999,166 @@ def create_apm_config_correlation(workspace_id, traces_pattern_id, service_map_p
             {"name": "entities[1].index", "type": "index-pattern", "id": service_map_pattern_id},
             {"name": "entities[2].dataConnection", "type": "data-connection", "id": prometheus_datasource_id},
         ],
+    )
+
+
+def _correlation_url(workspace_id, obj_id=None):
+    if workspace_id and workspace_id != "default":
+        url = f"{BASE_URL}/w/{workspace_id}/api/saved_objects/correlations"
+    else:
+        url = f"{BASE_URL}/api/saved_objects/correlations"
+    return f"{url}/{obj_id}" if obj_id else url
+
+
+def _index_pattern_exists(workspace_id, pattern_id):
+    if workspace_id and workspace_id != "default":
+        url = f"{BASE_URL}/w/{workspace_id}/api/saved_objects/index-pattern/{pattern_id}"
+    else:
+        url = f"{BASE_URL}/api/saved_objects/index-pattern/{pattern_id}"
+    try:
+        response = requests.get(
+            url, auth=(USERNAME, PASSWORD), headers={"osd-xsrf": "true"}, verify=False, timeout=10
+        )
+        return response.status_code == 200
+    except requests.exceptions.RequestException:
+        # Unknown is not missing: never rewrite a config on a transient error
+        return True
+
+
+def delete_trace_to_evaluations_correlations():
+    """Remove trace-to-evaluations-* correlations left by an earlier version of this script.
+
+    The evaluations dataset used to be tied to the traces dataset by a
+    trace-to-evaluations-otel-v1-apm-span* correlation. The AgentEvals-Config app config
+    replaces it; nothing reads the old shape, so it is deleted rather than left to dangle.
+    """
+    try:
+        resp = requests.get(
+            f"{BASE_URL}/api/saved_objects/_find?type=correlations&per_page=1000",
+            auth=(USERNAME, PASSWORD),
+            headers={"osd-xsrf": "true"},
+            verify=False,
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            print(f"⚠️  Could not list correlations for trace-to-evaluations cleanup ({resp.status_code})")
+            return
+        for obj in resp.json().get("saved_objects", []):
+            ct = (obj.get("attributes") or {}).get("correlationType", "")
+            if not ct.startswith("trace-to-evaluations-"):
+                continue
+            obj_id = obj.get("id")
+            workspaces = obj.get("workspaces") or []
+            del_resp = requests.delete(
+                _correlation_url(workspaces[0] if workspaces else None, obj_id) + "?force=true",
+                auth=(USERNAME, PASSWORD),
+                headers={"osd-xsrf": "true"},
+                verify=False,
+                timeout=10,
+            )
+            if del_resp.status_code in (200, 204, 404):
+                print(f"🧹 Deleted stale correlation {obj_id} ({ct}), replaced by AgentEvals-Config")
+            else:
+                print(
+                    f"⚠️  Failed to delete stale correlation {obj_id} "
+                    f"({del_resp.status_code}): {del_resp.text[:200]}"
+                )
+    except requests.exceptions.RequestException as e:
+        print(f"⚠️  Error scanning correlations for trace-to-evaluations cleanup: {e}")
+
+
+def create_agent_evals_config_correlation(workspace_id, traces_pattern_id, evaluations_pattern_id):
+    """Create the Agent Evaluations app config (AgentEvals-Config-<workspace>).
+
+    The APM-Config pattern for Agent Traces > Evaluations: one `correlations` saved object per
+    workspace naming the traces dataset and the evaluations dataset (the logs dataset over the
+    gen_ai.evaluation.result / opensearch.test_case.result / opensearch.test_suite_run.result
+    events). The Evaluations page reads its index from it, and its Settings modal writes the
+    same object, so this must stay in step with OpenSearch Dashboards:
+    correlationType "AgentEvals-Config-<workspaceId>" ("default" without a workspace),
+    entities tracesDataset / evaluationsDataset.
+
+    Idempotent on the exact correlationType. An existing config is kept as is (a dataset picked
+    in the Settings modal survives re-runs) unless one of its index patterns no longer exists,
+    in which case it is pointed at the datasets created here.
+    """
+    correlation_type = f"AgentEvals-Config-{workspace_id or 'default'}"
+    entities = [
+        {"tracesDataset": {"id": "references[0].id"}},
+        {"evaluationsDataset": {"id": "references[1].id"}},
+    ]
+    references = [
+        {"name": "entities[0].index", "type": "index-pattern", "id": traces_pattern_id},
+        {"name": "entities[1].index", "type": "index-pattern", "id": evaluations_pattern_id},
+    ]
+
+    if workspace_id and workspace_id != "default":
+        find_url = f"{BASE_URL}/w/{workspace_id}/api/saved_objects/_find?type=correlations&per_page=1000"
+    else:
+        find_url = f"{BASE_URL}/api/saved_objects/_find?type=correlations&per_page=1000"
+    try:
+        response = requests.get(
+            find_url,
+            auth=(USERNAME, PASSWORD),
+            headers={"Content-Type": "application/json", "osd-xsrf": "true"},
+            verify=False,
+            timeout=10,
+        )
+    except requests.exceptions.RequestException as e:
+        print(f"⚠️  Error checking existing AgentEvals config: {e}")
+        return None
+    if response.status_code != 200:
+        print(f"⚠️  Could not list correlations for AgentEvals config ({response.status_code})")
+        return None
+
+    existing = next(
+        (
+            obj
+            for obj in response.json().get("saved_objects", [])
+            if (obj.get("attributes") or {}).get("correlationType") == correlation_type
+        ),
+        None,
+    )
+
+    if existing:
+        existing_id = existing.get("id")
+        ref_ids = [r.get("id") for r in existing.get("references") or [] if r.get("type") == "index-pattern"]
+        if len(ref_ids) >= 2 and all(_index_pattern_exists(workspace_id, rid) for rid in ref_ids):
+            print(f"✅ Correlation already exists ({correlation_type}): {existing_id}")
+            return existing_id
+        print(f"🔧 Updating {correlation_type} ({existing_id}): a referenced dataset is missing")
+        try:
+            response = requests.put(
+                _correlation_url(workspace_id, existing_id),
+                auth=(USERNAME, PASSWORD),
+                headers={"Content-Type": "application/json", "osd-xsrf": "true"},
+                json={
+                    "attributes": {
+                        "correlationType": correlation_type,
+                        "title": "AgentEvals-Config",
+                        "version": "1.0.0",
+                        "entities": entities,
+                    },
+                    "references": references,
+                },
+                verify=False,
+                timeout=10,
+            )
+            if response.status_code == 200:
+                print(f"✅ Updated correlation: AgentEvals-Config ({existing_id})")
+                return existing_id
+            print(f"⚠️  AgentEvals config update failed: {response.text}")
+        except requests.exceptions.RequestException as e:
+            print(f"⚠️  Error updating AgentEvals config: {e}")
+        return None
+
+    return create_correlation(
+        workspace_id,
+        prefix=correlation_type,
+        correlation_type=correlation_type,
+        title="AgentEvals-Config",
+        entities=entities,
+        references=references,
     )
 
 
@@ -1922,7 +2057,7 @@ def main():
     )
     # Agent evaluation events (gen_ai.evaluation.result, opensearch.test_case.result,
     # opensearch.test_suite_run.result), routed by Data Prepper to otel-v1-genai-evaluation-*.
-    # A logs dataset, so Explore Logs queries it with PPL and the trace flyout correlates it.
+    # A logs dataset, so Explore Logs queries it with PPL; AgentEvals-Config (below) names it.
     evaluations_schema_mappings = '{"otelLogs":{"timestamp":"time","traceId":"traceId","spanId":"spanId","serviceName":"serviceName"}}'
     evaluations_pattern_id = create_index_pattern(
         workspace_id, "otel-v1-genai-evaluation*", "time", "logs", evaluations_schema_mappings,
@@ -1956,9 +2091,11 @@ def main():
     if traces_pattern_id and logs_pattern_id:
         create_trace_to_logs_correlation(workspace_id, traces_pattern_id, logs_pattern_id)
 
-    # Create trace-to-evaluations correlation (Agent Traces > Evaluations reads its dataset)
+    # Agent Evaluations app config (Agent Traces > Evaluations reads its datasets from it).
+    # It replaces the trace-to-evaluations-* correlation of earlier versions; drop those first.
+    delete_trace_to_evaluations_correlations()
     if traces_pattern_id and evaluations_pattern_id:
-        create_trace_to_evaluations_correlation(
+        create_agent_evals_config_correlation(
             workspace_id, traces_pattern_id, evaluations_pattern_id
         )
 
