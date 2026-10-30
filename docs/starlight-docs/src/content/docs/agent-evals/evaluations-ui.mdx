@@ -17,14 +17,13 @@ Verdicts use one color scheme everywhere: **Pass** green, **Fail** red, **Evalua
 
 ## Overview: what needs attention
 
-![Agent Evaluations Overview with Needs attention findings, Top changes, KPIs, score trend, results over time, evaluation cards, and recent failures.](./images/evaluations-overview.png)
+![Agent Evaluations Overview with Needs attention findings, KPIs, score trend, results over time, evaluation cards, and recent failures.](./images/evaluations-overview.png)
 
 {/* TODO: refresh this screenshot after the Evaluations UI redesign. */}
 
 The Overview answers "is anything getting worse?" for the selected time range. It compares the range with the previous range of the same length:
 
 - **Needs attention** - up to five findings, most urgent first: the largest pass-rate drop, the most regressed evaluation run, the lowest pass rate, a failing label that is new in this range, and evaluations that stopped reporting. Each links to where to look next. The findings come from aggregations, not from an LLM.
-- **Top changes** - per evaluation, its pass rate (or its mean, without a pass rule) and the change against the previous range, worst first.
 - **KPIs** - results, evaluations, pass rate, failing results, evaluated traces, and evaluated sessions.
 - **Score trend** and **Results over time** - means normalized to each evaluation's range, and pass/fail/error/scored counts per interval.
 - **Evaluation cards** - one per evaluation, most failing first, with pass rate, mean, counts, the label split, and a mini chart.
@@ -68,7 +67,7 @@ The Evaluation runs tab lists [offline runs](/docs/agent-evals/offline-runs-ci/)
 - one column per evaluator, with its mean and the change against the previous run of the same suite
 - agent version and model from the run metadata (`agent.version`, `agent.model`), and tokens and cost when the metadata has them
 
-A run that regressed against the previous run of its suite is flagged. Runs uploaded without case or run events still appear, with counts computed from their grades.
+Runs uploaded without case or run events still appear, with counts computed from their grades.
 
 ### Run page
 
@@ -78,18 +77,19 @@ Select a run to open its page. It shows the following:
 - **Scores by test case**: each case's status, input, expected, output, duration, and grades
 - **Open trace** for each case's agent trace
 
-From a failing evaluation, **Where ... fails in this run** narrows the breakdown to this run. CI jobs link straight to a run page (the GitHub Action writes this link to the job summary):
+From a failing evaluation, **Where ... fails in this run** narrows the breakdown to this run. The run page is its own page, with a breadcrumb back to Evaluation runs and no time picker: a run loads by its id. CI jobs link straight to it (the GitHub Action writes this link to the job summary):
 
 ```text
-/app/agentTraces/evaluations#/?_a=(tab:runs,run:'<test.suite.run.id>')
+/app/agentTraces/evaluations#/runs/<test.suite.run.id>
 ```
+
+Older links of the form `#/?_a=(tab:runs,run:'<id>')` redirect to it.
 
 ### Compare runs
 
-Select 2 to 5 runs of the same suite and choose **Compare**. From a run page, you can also choose **Compare with previous run** or **Compare with...**. One run is the **baseline**. Change it with **Set baseline**, and the others are measured against it.
+Select 2 to 5 runs of the same suite and choose **Compare**, which opens its own page. There is no single verdict word: as in most evaluation tools, you read the counts and deltas. From a run page, you can also choose **Compare with previous run** or **Compare with...**. One run is the **baseline**. Change it with **Set baseline**, and the others are measured against it.
 
 - **Runs table** - pass rate with its change in points, "10 of 12 passed", each evaluation's mean with its change, duration, and how many test cases **improved**, **regressed**, or stayed the same. Changes are colored by better or worse for that evaluation, taking its direction and range into account, never by sign. A move under 5% of the range counts as no change.
-- **Run verdict** - each non-baseline run gets one word: **Improvement**, **Regression**, **Tradeoff** (some evaluations better, some worse), or **Tie**. A short sentence names the evaluations or test cases behind it.
 - **Comparability warnings** - a callout appears when the runs differ in test cases, evaluator, evaluator version, or judge model, or when an evaluation has a pass rule in one run but not another. Agent version and model changes are listed neutrally.
 - **Test cases** - one column per run, with a verdict chip per evaluation and the delta against the baseline. Sort by biggest regression (the default), most improved, or name.
 
