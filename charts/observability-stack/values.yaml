@@ -216,6 +216,16 @@ data-prepper:
   pipelineConfig:
     enabled: false
     existingSecret: data-prepper-pipeline
+  # Index templates the pipelines install (template_file): the genai-evaluation template
+  # for otel-v1-genai-evaluation-*. ConfigMap from templates/data-prepper-templates-configmap.yaml.
+  volumes:
+    - name: data-prepper-templates
+      configMap:
+        name: data-prepper-templates
+  volumeMounts:
+    - name: data-prepper-templates
+      mountPath: /usr/share/data-prepper/templates
+      readOnly: true
 
 # -- Data Prepper pipeline Secret ownership. When true (default), the chart renders the
 # default logs/traces/service-map pipeline Secret named by data-prepper.pipelineConfig.

@@ -8,10 +8,12 @@ import yaml
 _dashboards_host = os.getenv("OPENSEARCH_DASHBOARDS_HOST", "opensearch-dashboards")
 _dashboards_port = os.getenv("OPENSEARCH_DASHBOARDS_PORT", "5601")
 _dashboards_protocol = os.getenv("OPENSEARCH_DASHBOARDS_PROTOCOL", "http")
+# BASE_URL / OPENSEARCH_ENDPOINT override the host/port/protocol parts as a whole; the Helm
+# chart sets them to its release-scoped Service names. Compose sets the parts instead.
 BASE_URL = os.getenv("BASE_URL", f"{_dashboards_protocol}://{_dashboards_host}:{_dashboards_port}")
 USERNAME = os.getenv("OPENSEARCH_USER", "admin")
 PASSWORD = os.getenv("OPENSEARCH_PASSWORD", "My_password_123!@#")
-PROMETHEUS_HOST = os.getenv("PROMETHEUS_HOST", "prometheus")
+PROMETHEUS_HOST = os.getenv("PROMETHEUS_HOST", "prometheus.observability-stack-network")
 PROMETHEUS_PORT = os.getenv("PROMETHEUS_PORT", "9090")
 ALERTMANAGER_HOST = os.getenv("ALERTMANAGER_HOST", "alertmanager")
 ALERTMANAGER_PORT = os.getenv("ALERTMANAGER_PORT", "9093")
@@ -21,6 +23,36 @@ ISM_RETENTION_DAYS = int(os.getenv("ISM_RETENTION_DAYS", "7"))
 INSTALL_EBPF_EXAMPLE_DASHBOARD = os.getenv(
     "INSTALL_EBPF_EXAMPLE_DASHBOARD", "false"
 ).strip().lower() in {"1", "true", "yes", "on"}
+INSTALL_VISUALIZATION_SAMPLES = os.getenv(
+    "INSTALL_VISUALIZATION_SAMPLES", "false"
+).strip().lower() in {"1", "true", "yes", "on"}
+# Make the Observability Stack workspace the defaultWorkspace so users skip the workspace
+# picker. The Helm chart turns this on; compose leaves the picker in place.
+SET_DEFAULT_WORKSPACE = os.getenv(
+    "SET_DEFAULT_WORKSPACE", "false"
+).strip().lower() in {"1", "true", "yes", "on"}
+# Print the admin credentials in the closing summary. On for the local compose quickstart;
+# the Helm chart turns it off so the password does not land in Kubernetes Job logs.
+PRINT_CREDENTIALS = os.getenv(
+    "PRINT_CREDENTIALS", "true"
+).strip().lower() in {"1", "true", "yes", "on"}
+# Anonymous auth (Helm values anonymousAuth.enabled) also grants the anonymous role access
+# to the Prometheus datasource.
+ANONYMOUS_AUTH_ENABLED = os.getenv(
+    "ANONYMOUS_AUTH_ENABLED", "false"
+).strip().lower() in {"1", "true", "yes", "on"}
+DEMO_DASHBOARD_PATHS = (
+    "/config/demo-dashboards/viz-demo-bar-and-pie.ndjson",
+    "/config/demo-dashboards/viz-demo-dashboard-variables.ndjson",
+    "/config/demo-dashboards/viz-demo-data-transformation.ndjson",
+    "/config/demo-dashboards/viz-demo-gauges.ndjson",
+    "/config/demo-dashboards/viz-demo-heatmap-and-scatter.ndjson",
+    "/config/demo-dashboards/viz-demo-histogram.ndjson",
+    "/config/demo-dashboards/viz-demo-metric-charts.ndjson",
+    "/config/demo-dashboards/viz-demo-state-timeline.ndjson",
+    "/config/demo-dashboards/viz-demo-thresholds.ndjson",
+    "/config/demo-dashboards/viz-demo-time-series.ndjson",
+)
 
 
 def _ism_policy(policy_id, description, index_patterns, rollover_size, retention_days):
@@ -217,6 +249,77 @@ def set_default_workspace(workspace_id):
     except requests.exceptions.RequestException as e:
         print(f"⚠️  Error setting default workspace: {e}")
         return False
+
+
+def ensure_sample_data(workspace_id, sample_data_id):
+    """Ensure a built-in sample dataset is ready and return its index-pattern ID."""
+    if workspace_id and workspace_id != "default":
+        api_base_url = f"{BASE_URL}/w/{workspace_id}"
+    else:
+        api_base_url = BASE_URL
+
+    headers = {"osd-xsrf": "true"}
+    try:
+        response = requests.get(
+            f"{api_base_url}/api/sample_data",
+            auth=(USERNAME, PASSWORD),
+            headers=headers,
+            verify=False,
+            timeout=30,
+        )
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"Could not inspect sample data ({response.status_code}): "
+                f"{response.text[:200]}"
+            )
+
+        sample_data = next(
+            (
+                dataset
+                for dataset in response.json()
+                if dataset.get("id") == sample_data_id
+            ),
+            None,
+        )
+        if sample_data is None:
+            raise RuntimeError(
+                f"OpenSearch Dashboards does not provide sample dataset "
+                f"'{sample_data_id}'"
+            )
+        default_index = sample_data.get("defaultIndex")
+        if not default_index:
+            raise RuntimeError(
+                f"Sample dataset '{sample_data_id}' has no default index pattern"
+            )
+        status = sample_data.get("status")
+        if status == "installed":
+            print(f"✅ Sample data already installed: {sample_data_id}")
+            return default_index
+        if status != "not_installed":
+            raise RuntimeError(
+                f"Could not determine whether sample dataset '{sample_data_id}' "
+                f"is installed (status: {status})"
+            )
+
+        print(f"📦 Installing sample data: {sample_data_id}...")
+        response = requests.post(
+            f"{api_base_url}/api/sample_data/{sample_data_id}",
+            auth=(USERNAME, PASSWORD),
+            headers=headers,
+            verify=False,
+            timeout=120,
+        )
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"Sample data installation failed ({response.status_code}): "
+                f"{response.text[:200]}"
+            )
+        print(f"✅ Installed sample data: {sample_data_id}")
+        return default_index
+    except requests.exceptions.RequestException as e:
+        raise RuntimeError(
+            f"Error ensuring sample data '{sample_data_id}': {e}"
+        ) from e
 
 
 def get_existing_index_pattern(workspace_id, title):
@@ -428,9 +531,12 @@ def create_prometheus_datasource(workspace_id):
 
     print("🔧 Creating Prometheus datasource...")
 
-    # Grant anonymous users access to the Prometheus datasource when anonymous auth is enabled
-    anonymous_auth = os.getenv("ANONYMOUS_AUTH_ENABLED", "false").lower() == "true"
-    allowed_roles = ["all_access", "opendistro_security_anonymous_role"] if anonymous_auth else ["all_access"]
+    # Grant anonymous users access to the Prometheus datasource when anonymous auth is enabled.
+    # Otherwise leave allowedRoles empty: the SQL plugin always admits all_access users, so an
+    # empty list and ["all_access"] authorize the same users.
+    allowed_roles = (
+        ["all_access", "opendistro_security_anonymous_role"] if ANONYMOUS_AUTH_ENABLED else []
+    )
 
     payload = {
         "name": datasource_name,
@@ -890,10 +996,16 @@ def get_existing_correlation(workspace_id, correlation_type_prefix):
         return None
 
 
-def create_correlation(workspace_id, correlation_type, title, entities, references):
-    """Create a correlation saved object (idempotent)"""
-    # Determine prefix for existence check (APM-Config- or trace-to-logs-)
-    prefix = correlation_type.split("-")[0] + "-" + correlation_type.split("-")[1] if "-" in correlation_type else correlation_type
+def create_correlation(workspace_id, correlation_type, title, entities, references, prefix=None):
+    """Create a correlation saved object (idempotent)
+
+    `prefix` is the correlationType prefix that marks an existing correlation of the same
+    kind. By default it is the first two dash-separated words of the type ("APM-Config",
+    "trace-to"); pass it explicitly to narrow the match ("trace-to-logs-" so another
+    trace-to-* kind is never taken for it).
+    """
+    if prefix is None:
+        prefix = correlation_type.split("-")[0] + "-" + correlation_type.split("-")[1] if "-" in correlation_type else correlation_type
     existing_id = get_existing_correlation(workspace_id, prefix)
     if existing_id:
         print(f"✅ Correlation already exists ({prefix}*): {existing_id}")
@@ -944,6 +1056,7 @@ def create_trace_to_logs_correlation(workspace_id, traces_pattern_id, logs_patte
     """Create trace-to-logs correlation for cross-signal navigation"""
     return create_correlation(
         workspace_id,
+        prefix="trace-to-logs-",
         correlation_type=f"trace-to-logs-otel-v1-apm-span*",
         title="trace-to-logs_otel-v1-apm-span*",
         entities=[
@@ -977,6 +1090,166 @@ def create_apm_config_correlation(workspace_id, traces_pattern_id, service_map_p
             {"name": "entities[1].index", "type": "index-pattern", "id": service_map_pattern_id},
             {"name": "entities[2].dataConnection", "type": "data-connection", "id": prometheus_datasource_id},
         ],
+    )
+
+
+def _correlation_url(workspace_id, obj_id=None):
+    if workspace_id and workspace_id != "default":
+        url = f"{BASE_URL}/w/{workspace_id}/api/saved_objects/correlations"
+    else:
+        url = f"{BASE_URL}/api/saved_objects/correlations"
+    return f"{url}/{obj_id}" if obj_id else url
+
+
+def _index_pattern_exists(workspace_id, pattern_id):
+    if workspace_id and workspace_id != "default":
+        url = f"{BASE_URL}/w/{workspace_id}/api/saved_objects/index-pattern/{pattern_id}"
+    else:
+        url = f"{BASE_URL}/api/saved_objects/index-pattern/{pattern_id}"
+    try:
+        response = requests.get(
+            url, auth=(USERNAME, PASSWORD), headers={"osd-xsrf": "true"}, verify=False, timeout=10
+        )
+        return response.status_code == 200
+    except requests.exceptions.RequestException:
+        # Unknown is not missing: never rewrite a config on a transient error
+        return True
+
+
+def delete_trace_to_evaluations_correlations():
+    """Remove trace-to-evaluations-* correlations left by an earlier version of this script.
+
+    The evaluations dataset used to be tied to the traces dataset by a
+    trace-to-evaluations-otel-v1-apm-span* correlation. The AgentEvals-Config app config
+    replaces it; nothing reads the old shape, so it is deleted rather than left to dangle.
+    """
+    try:
+        resp = requests.get(
+            f"{BASE_URL}/api/saved_objects/_find?type=correlations&per_page=1000",
+            auth=(USERNAME, PASSWORD),
+            headers={"osd-xsrf": "true"},
+            verify=False,
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            print(f"⚠️  Could not list correlations for trace-to-evaluations cleanup ({resp.status_code})")
+            return
+        for obj in resp.json().get("saved_objects", []):
+            ct = (obj.get("attributes") or {}).get("correlationType", "")
+            if not ct.startswith("trace-to-evaluations-"):
+                continue
+            obj_id = obj.get("id")
+            workspaces = obj.get("workspaces") or []
+            del_resp = requests.delete(
+                _correlation_url(workspaces[0] if workspaces else None, obj_id) + "?force=true",
+                auth=(USERNAME, PASSWORD),
+                headers={"osd-xsrf": "true"},
+                verify=False,
+                timeout=10,
+            )
+            if del_resp.status_code in (200, 204, 404):
+                print(f"🧹 Deleted stale correlation {obj_id} ({ct}), replaced by AgentEvals-Config")
+            else:
+                print(
+                    f"⚠️  Failed to delete stale correlation {obj_id} "
+                    f"({del_resp.status_code}): {del_resp.text[:200]}"
+                )
+    except requests.exceptions.RequestException as e:
+        print(f"⚠️  Error scanning correlations for trace-to-evaluations cleanup: {e}")
+
+
+def create_agent_evals_config_correlation(workspace_id, traces_pattern_id, evaluations_pattern_id):
+    """Create the Agent Evaluations app config (AgentEvals-Config-<workspace>).
+
+    The APM-Config pattern for Agent Traces > Evaluations: one `correlations` saved object per
+    workspace naming the traces dataset and the evaluations dataset (the logs dataset over the
+    gen_ai.evaluation.result / opensearch.test_case.result / opensearch.test_suite_run.result
+    events). The Evaluations page reads its index from it, and its Settings modal writes the
+    same object, so this must stay in step with OpenSearch Dashboards:
+    correlationType "AgentEvals-Config-<workspaceId>" ("default" without a workspace),
+    entities tracesDataset / evaluationsDataset.
+
+    Idempotent on the exact correlationType. An existing config is kept as is (a dataset picked
+    in the Settings modal survives re-runs) unless one of its index patterns no longer exists,
+    in which case it is pointed at the datasets created here.
+    """
+    correlation_type = f"AgentEvals-Config-{workspace_id or 'default'}"
+    entities = [
+        {"tracesDataset": {"id": "references[0].id"}},
+        {"evaluationsDataset": {"id": "references[1].id"}},
+    ]
+    references = [
+        {"name": "entities[0].index", "type": "index-pattern", "id": traces_pattern_id},
+        {"name": "entities[1].index", "type": "index-pattern", "id": evaluations_pattern_id},
+    ]
+
+    if workspace_id and workspace_id != "default":
+        find_url = f"{BASE_URL}/w/{workspace_id}/api/saved_objects/_find?type=correlations&per_page=1000"
+    else:
+        find_url = f"{BASE_URL}/api/saved_objects/_find?type=correlations&per_page=1000"
+    try:
+        response = requests.get(
+            find_url,
+            auth=(USERNAME, PASSWORD),
+            headers={"Content-Type": "application/json", "osd-xsrf": "true"},
+            verify=False,
+            timeout=10,
+        )
+    except requests.exceptions.RequestException as e:
+        print(f"⚠️  Error checking existing AgentEvals config: {e}")
+        return None
+    if response.status_code != 200:
+        print(f"⚠️  Could not list correlations for AgentEvals config ({response.status_code})")
+        return None
+
+    existing = next(
+        (
+            obj
+            for obj in response.json().get("saved_objects", [])
+            if (obj.get("attributes") or {}).get("correlationType") == correlation_type
+        ),
+        None,
+    )
+
+    if existing:
+        existing_id = existing.get("id")
+        ref_ids = [r.get("id") for r in existing.get("references") or [] if r.get("type") == "index-pattern"]
+        if len(ref_ids) >= 2 and all(_index_pattern_exists(workspace_id, rid) for rid in ref_ids):
+            print(f"✅ Correlation already exists ({correlation_type}): {existing_id}")
+            return existing_id
+        print(f"🔧 Updating {correlation_type} ({existing_id}): a referenced dataset is missing")
+        try:
+            response = requests.put(
+                _correlation_url(workspace_id, existing_id),
+                auth=(USERNAME, PASSWORD),
+                headers={"Content-Type": "application/json", "osd-xsrf": "true"},
+                json={
+                    "attributes": {
+                        "correlationType": correlation_type,
+                        "title": "AgentEvals-Config",
+                        "version": "1.0.0",
+                        "entities": entities,
+                    },
+                    "references": references,
+                },
+                verify=False,
+                timeout=10,
+            )
+            if response.status_code == 200:
+                print(f"✅ Updated correlation: AgentEvals-Config ({existing_id})")
+                return existing_id
+            print(f"⚠️  AgentEvals config update failed: {response.text}")
+        except requests.exceptions.RequestException as e:
+            print(f"⚠️  Error updating AgentEvals config: {e}")
+        return None
+
+    return create_correlation(
+        workspace_id,
+        prefix=correlation_type,
+        correlation_type=correlation_type,
+        title="AgentEvals-Config",
+        entities=entities,
+        references=references,
     )
 
 
@@ -1703,6 +1976,21 @@ def _create_saved_object_directly(workspace_id, obj):
         return False
 
 
+def _rewrite_mapped_ids(value, id_mappings):
+    """Rewrite exported IDs in saved-object attributes, including JSON strings."""
+    if isinstance(value, dict):
+        return {
+            key: _rewrite_mapped_ids(item, id_mappings)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_rewrite_mapped_ids(item, id_mappings) for item in value]
+    if isinstance(value, str):
+        for old_id, new_id in id_mappings.items():
+            value = value.replace(old_id, new_id)
+    return value
+
+
 def import_ndjson_dashboard(workspace_id, ndjson_path, id_mappings=None):
     """Import a dashboard and its dependencies from an ndjson export file.
 
@@ -1751,8 +2039,13 @@ def import_ndjson_dashboard(workspace_id, ndjson_path, id_mappings=None):
         # Remove version field that can cause conflicts on import
         obj.pop("version", None)
 
-        # Rewrite references to point at the live index-pattern IDs
+        # Rewrite references and serialized attribute content to point at live
+        # index-pattern IDs. Dashboard variables keep their dataset inside
+        # variablesJSON rather than the standard saved-object references array.
         if id_mappings:
+            obj["attributes"] = _rewrite_mapped_ids(
+                obj.get("attributes", {}), id_mappings
+            )
             for ref in obj.get("references", []):
                 if ref.get("id") in id_mappings:
                     ref["id"] = id_mappings[ref["id"]]
@@ -1803,6 +2096,27 @@ def import_ndjson_dashboard(workspace_id, ndjson_path, id_mappings=None):
     return total_success
 
 
+def install_visualization_samples(workspace_id, logs_pattern_id, id_mappings):
+    """Install optional sample data and dashboards without blocking core setup."""
+    try:
+        flights_pattern_id = ensure_sample_data(workspace_id, "flights")
+    except RuntimeError as e:
+        print(
+            "⚠️  Could not prepare optional visualization samples; "
+            f"continuing core initialization: {e}"
+        )
+        return False
+
+    if logs_pattern_id:
+        id_mappings["85c9f700-905d-11f1-8e13-1fc52a695474"] = logs_pattern_id
+    id_mappings["d3d7af60-4c81-11e8-b3d7-01146121b73d"] = flights_pattern_id
+
+    for dashboard_path in DEMO_DASHBOARD_PATHS:
+        import_ndjson_dashboard(workspace_id, dashboard_path, id_mappings)
+
+    return True
+
+
 def main():
     """Initialize OpenSearch Dashboards with workspace and datasources"""
     wait_for_dashboards()
@@ -1818,8 +2132,9 @@ def main():
     else:
         workspace_id = create_workspace()
 
-    # Set as default workspace so users skip the workspace picker
-    set_default_workspace(workspace_id)
+    # Set as default workspace so users skip the workspace picker (Helm)
+    if SET_DEFAULT_WORKSPACE:
+        set_default_workspace(workspace_id)
 
     # Create index patterns (idempotent - will skip if already exist)
     # Titles must match exactly what the APM plugin expects
@@ -1835,8 +2150,16 @@ def main():
     service_map_pattern_id = create_index_pattern(
         workspace_id, "otel-v2-apm-service-map*", "timestamp"
     )
+    # Agent evaluation events (gen_ai.evaluation.result, opensearch.test_case.result,
+    # opensearch.test_suite_run.result), routed by Data Prepper to otel-v1-genai-evaluation-*.
+    # A logs dataset, so Explore Logs queries it with PPL; AgentEvals-Config (below) names it.
+    evaluations_schema_mappings = '{"otelLogs":{"timestamp":"time","traceId":"traceId","spanId":"spanId","serviceName":"serviceName"}}'
+    evaluations_pattern_id = create_index_pattern(
+        workspace_id, "otel-v1-genai-evaluation*", "time", "logs", evaluations_schema_mappings,
+        display_name="Evaluation Dataset - Local Cluster"
+    )
 
-    print("📊 Created index patterns for spans, logs, and service map")
+    print("📊 Created index patterns for spans, logs, service map and evaluations")
 
     # Warm the field list immediately after creation. Patterns created via the
     # raw saved-objects API land with an empty `fields` attribute (OSD only
@@ -1851,6 +2174,7 @@ def main():
         (logs_pattern_id, "logs-otel-v1*"),
         (traces_pattern_id, "otel-v1-apm-span*"),
         (service_map_pattern_id, "otel-v2-apm-service-map*"),
+        (evaluations_pattern_id, "otel-v1-genai-evaluation*"),
     ):
         refresh_index_pattern_fields(workspace_id, pid, title)
 
@@ -1862,6 +2186,14 @@ def main():
     if traces_pattern_id and logs_pattern_id:
         create_trace_to_logs_correlation(workspace_id, traces_pattern_id, logs_pattern_id)
 
+    # Agent Evaluations app config (Agent Traces > Evaluations reads its datasets from it).
+    # It replaces the trace-to-evaluations-* correlation of earlier versions; drop those first.
+    delete_trace_to_evaluations_correlations()
+    if traces_pattern_id and evaluations_pattern_id:
+        create_agent_evals_config_correlation(
+            workspace_id, traces_pattern_id, evaluations_pattern_id
+        )
+
     # Create Agent Observability dashboard
     if traces_pattern_id:
         create_agent_observability_dashboard(workspace_id, traces_pattern_id)
@@ -1869,13 +2201,12 @@ def main():
     # Create overview landing dashboard (becomes the new default)
     create_overview_dashboard(workspace_id)
 
-    # Create self-monitoring dashboards (PromQL explore panels)
-    create_promql_dashboard_from_yaml(workspace_id, "/config/dashboard-k8s-cluster-health.yaml")
+    # Create self-monitoring dashboards (PromQL explore panels). The Kubernetes cluster health
+    # dashboard ships with the Helm chart only; compose has no such file and skips it.
+    if os.path.exists("/config/dashboard-k8s-cluster-health.yaml"):
+        create_promql_dashboard_from_yaml(workspace_id, "/config/dashboard-k8s-cluster-health.yaml")
     create_promql_dashboard_from_yaml(workspace_id, "/config/dashboard-pipeline-health.yaml")
     create_promql_dashboard_from_yaml(workspace_id, "/config/dashboard-opensearch-health.yaml")
-
-    # Create saved queries for common agent observability patterns
-    create_default_saved_queries(workspace_id)
 
     # Create datasources (must happen before ndjson import so Prometheus references resolve)
     prometheus_datasource_id = create_prometheus_datasource(workspace_id)
@@ -1900,6 +2231,21 @@ def main():
     if INSTALL_EBPF_EXAMPLE_DASHBOARD:
         import_ndjson_dashboard(workspace_id, "/config/dashboard-ebpf-example.ndjson", ndjson_id_mappings)
 
+    if INSTALL_VISUALIZATION_SAMPLES:
+        # Visualization demos reuse the live logs pattern, the Prometheus
+        # datasource, and OpenSearch Dashboards' built-in Flights sample data.
+        install_visualization_samples(
+            workspace_id, logs_pattern_id, ndjson_id_mappings
+        )
+    else:
+        print(
+            "⏭️  INSTALL_VISUALIZATION_SAMPLES=false, skipping Flights data "
+            "and bundled visualization samples"
+        )
+
+    # Create saved queries for common agent observability patterns
+    create_default_saved_queries(workspace_id)
+
     # Create APM config correlation (ties traces + service map + Prometheus)
     if traces_pattern_id and service_map_pattern_id:
         # Resolve Prometheus data-connection saved object ID
@@ -1911,6 +2257,9 @@ def main():
     # Output summary
     print()
     print("🎉 Observability Stack Ready!")
+    if PRINT_CREDENTIALS:
+        print(f"👤 Username: {USERNAME}")
+        print(f"🔑 Password: {PASSWORD}")
 
     # Generate appropriate dashboard URL
     if workspace_id and workspace_id != "default":
@@ -2046,7 +2395,12 @@ def run_field_refresh_backstop():
     """
     wait_for_dashboards()
     workspace_id = get_existing_workspace()
-    titles = ["logs-otel-v1*", "otel-v1-apm-span*", "otel-v2-apm-service-map*"]
+    titles = [
+        "logs-otel-v1*",
+        "otel-v1-apm-span*",
+        "otel-v2-apm-service-map*",
+        "otel-v1-genai-evaluation*",
+    ]
     delayed_field_refresh(workspace_id, titles)
 
 

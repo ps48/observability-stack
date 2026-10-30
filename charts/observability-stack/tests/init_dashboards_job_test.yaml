@@ -69,3 +69,16 @@ tests:
           content:
             name: INSTALL_EBPF_EXAMPLE_DASHBOARD
             value: "true"
+
+  - it: should switch the shared init script to its Kubernetes behaviour
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SET_DEFAULT_WORKSPACE
+            value: "true"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: PRINT_CREDENTIALS
+            value: "false"

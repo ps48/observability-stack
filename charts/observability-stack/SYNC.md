@@ -21,7 +21,8 @@ These must be updated in the Helm chart whenever they change in Docker Compose:
 - **Cortex config** — `docker-compose/cortex/cortex.yaml` ↔ `charts/observability-stack/files/cortex.yaml` (server, storage, ruler, limits, alertmanager_url)
 - **Cortex ruler rule files** — `docker-compose/prometheus/rules-stack/*.yml` ↔ `charts/observability-stack/files/rules-stack/*.yml`; same for `rules-otel-demo/`
 - **Alertmanager config** — `docker-compose/alertmanager/alertmanager.yml` ↔ `charts/observability-stack/files/alertmanager.yml`
-- **Init scripts** — `init-cortex-rules.py`, `init-stack-monitors.py`, `init-otel-demo-monitors.py`, `init-opensearch-dashboards.py` are bit-for-bit identical between compose and chart
+- **Init scripts** — `init-cortex-rules.py`, `init-stack-monitors.py`, `init-otel-demo-monitors.py`, `init-opensearch-dashboards.py` are bit-for-bit identical between compose and chart. Helm cannot `.Files.Get` outside the chart directory, so these are copies. `test/helm-test.sh` fails on drift for `init-opensearch-dashboards.py`. Kubernetes-only behaviour in that script is switched on by env vars the init Job sets (`BASE_URL`, `OPENSEARCH_ENDPOINT`, `SET_DEFAULT_WORKSPACE`, `PRINT_CREDENTIALS`, `ANONYMOUS_AUTH_ENABLED`; the k8s cluster health dashboard loads only when its file is mounted). Never edit one copy alone.
+- **GenAI evaluation index template** — `docker-compose/data-prepper/genai-evaluation-index-template.json` ↔ `charts/observability-stack/files/genai-evaluation-index-template.json` (byte-identical, checked by `test/helm-test.sh`; mounted into Data Prepper by `templates/data-prepper-templates-configmap.yaml`)
 - **OpenSearch Dashboards** — all feature flags and settings in `opensearch_dashboards.template.yml`
 
 ## What Is Intentionally Different (Do NOT Sync)
@@ -80,7 +81,7 @@ diff /tmp/compose-services <(grep -oE '^[a-z][a-z0-9-]+' charts/observability-st
 Read the diff for each commit. Ask:
 1. Did an image version or repo change in `.env`? → Update `values.yaml` image tags/repos + `Chart.yaml` appVersion
 2. Did a setting change in `docker-compose/otel-collector/config.yaml`? → Update `templates/otel-collector-configmap.yaml`
-3. Did a pipeline change in `docker-compose/data-prepper/pipelines.template.yaml`? → Update `templates/data-prepper-pipeline-secret.yaml`
+3. Did a pipeline change in `docker-compose/data-prepper/pipelines.template.yaml`? → Update `templates/data-prepper-pipeline-secret.yaml` (including `genai-evaluation-pipeline` and the `evaluations` route). A changed `genai-evaluation-index-template.json` → copy it to `files/`
 4. Did a Prometheus config change in `docker-compose/prometheus/prometheus.yml`? → Update the `prometheus:` section in `values.yaml`
 5. Did a Dashboards setting change in `docker-compose/opensearch-dashboards/opensearch_dashboards.template.yml`? → Update the `opensearch-dashboards.config` block in `values.yaml`
 6. Did a new service get added to `docker-compose.yml`? → May need a new template in `templates/`

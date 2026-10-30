@@ -17,9 +17,10 @@ Native templates (rendered directly by this chart, not subcharts):
 - `cortex-rules-configmap` — Cortex ruler rule groups loaded from `files/rules-stack/` and `files/rules-otel-demo/`
 - `alerting-rules-monitors-init-job` / `otel-demo-alerting-rules-monitors-init-job` — Post-install hooks that load rules into Cortex Ruler and OpenSearch alerting monitors
 - `opensearch-exporter` — Bridges OpenSearch cluster metrics to Cortex (OpenSearch has no native Prometheus endpoint)
-- `init-dashboards-job` — Post-install hook that creates index patterns, dashboards, saved queries
+- `init-dashboards-job` — Post-install hook that creates index patterns (including the evaluations dataset), dashboards, saved queries, and the APM and Agent Evaluations app configs. Runs `files/init-opensearch-dashboards.py`, a byte-identical copy of the Docker Compose init script (checked by `test/helm-test.sh`)
 - `opensearch-credentials-secret` — Shared credentials secret for all components
-- `data-prepper-pipeline-secret` — Pipeline config with credentials injected at template time
+- `data-prepper-pipeline-secret` — Pipeline config with credentials injected at template time; routes agent evaluation events to `otel-v1-genai-evaluation-*`
+- `data-prepper-templates-configmap` — Index templates the pipelines install (`files/genai-evaluation-index-template.json`, a copy of the Docker Compose one), mounted at `/usr/share/data-prepper/templates`
 - `otel-collector-configmap` — Collector config with dynamic service names, Cortex remote-write exporter, and self/envoy scrape
 
 ## Install

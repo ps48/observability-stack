@@ -8,7 +8,9 @@ import yaml
 _dashboards_host = os.getenv("OPENSEARCH_DASHBOARDS_HOST", "opensearch-dashboards")
 _dashboards_port = os.getenv("OPENSEARCH_DASHBOARDS_PORT", "5601")
 _dashboards_protocol = os.getenv("OPENSEARCH_DASHBOARDS_PROTOCOL", "http")
-BASE_URL = f"{_dashboards_protocol}://{_dashboards_host}:{_dashboards_port}"
+# BASE_URL / OPENSEARCH_ENDPOINT override the host/port/protocol parts as a whole; the Helm
+# chart sets them to its release-scoped Service names. Compose sets the parts instead.
+BASE_URL = os.getenv("BASE_URL", f"{_dashboards_protocol}://{_dashboards_host}:{_dashboards_port}")
 USERNAME = os.getenv("OPENSEARCH_USER", "admin")
 PASSWORD = os.getenv("OPENSEARCH_PASSWORD", "My_password_123!@#")
 PROMETHEUS_HOST = os.getenv("PROMETHEUS_HOST", "prometheus.observability-stack-network")
@@ -16,13 +18,28 @@ PROMETHEUS_PORT = os.getenv("PROMETHEUS_PORT", "9090")
 ALERTMANAGER_HOST = os.getenv("ALERTMANAGER_HOST", "alertmanager")
 ALERTMANAGER_PORT = os.getenv("ALERTMANAGER_PORT", "9093")
 _opensearch_protocol = os.getenv("OPENSEARCH_PROTOCOL", "https")
-OPENSEARCH_ENDPOINT = f"{_opensearch_protocol}://{os.getenv('OPENSEARCH_HOST', 'opensearch')}:{os.getenv('OPENSEARCH_PORT', '9200')}"
+OPENSEARCH_ENDPOINT = os.getenv("OPENSEARCH_ENDPOINT", f"{_opensearch_protocol}://{os.getenv('OPENSEARCH_HOST', 'opensearch')}:{os.getenv('OPENSEARCH_PORT', '9200')}")
 ISM_RETENTION_DAYS = int(os.getenv("ISM_RETENTION_DAYS", "7"))
 INSTALL_EBPF_EXAMPLE_DASHBOARD = os.getenv(
     "INSTALL_EBPF_EXAMPLE_DASHBOARD", "false"
 ).strip().lower() in {"1", "true", "yes", "on"}
 INSTALL_VISUALIZATION_SAMPLES = os.getenv(
     "INSTALL_VISUALIZATION_SAMPLES", "false"
+).strip().lower() in {"1", "true", "yes", "on"}
+# Make the Observability Stack workspace the defaultWorkspace so users skip the workspace
+# picker. The Helm chart turns this on; compose leaves the picker in place.
+SET_DEFAULT_WORKSPACE = os.getenv(
+    "SET_DEFAULT_WORKSPACE", "false"
+).strip().lower() in {"1", "true", "yes", "on"}
+# Print the admin credentials in the closing summary. On for the local compose quickstart;
+# the Helm chart turns it off so the password does not land in Kubernetes Job logs.
+PRINT_CREDENTIALS = os.getenv(
+    "PRINT_CREDENTIALS", "true"
+).strip().lower() in {"1", "true", "yes", "on"}
+# Anonymous auth (Helm values anonymousAuth.enabled) also grants the anonymous role access
+# to the Prometheus datasource.
+ANONYMOUS_AUTH_ENABLED = os.getenv(
+    "ANONYMOUS_AUTH_ENABLED", "false"
 ).strip().lower() in {"1", "true", "yes", "on"}
 DEMO_DASHBOARD_PATHS = (
     "/config/demo-dashboards/viz-demo-bar-and-pie.ndjson",
@@ -195,6 +212,43 @@ def create_workspace():
     except requests.exceptions.RequestException as e:
         print(f"⚠️  Error creating workspace: {e}")
         return "default"
+
+
+def set_default_workspace(workspace_id):
+    """Set the default workspace so all users land here on login.
+
+    When workspace.enabled is true, users see a workspace picker on first load.
+    Setting defaultWorkspace directs all users (including anonymous) straight
+    to the Observability Stack workspace instead.
+    """
+    if not workspace_id or workspace_id == "default":
+        print("⏭️  Skipping default workspace (using default)")
+        return False
+
+    print(f"⭐ Setting default workspace: {workspace_id}")
+
+    url = f"{BASE_URL}/api/opensearch-dashboards/settings"
+    payload = {"changes": {"defaultWorkspace": workspace_id}}
+
+    try:
+        response = requests.post(
+            url,
+            auth=(USERNAME, PASSWORD),
+            headers={"Content-Type": "application/json", "osd-xsrf": "true"},
+            json=payload,
+            verify=False,
+            timeout=10,
+        )
+
+        if response.status_code == 200:
+            print("✅ Default workspace set")
+            return True
+        else:
+            print(f"⚠️  Failed to set default workspace: {response.status_code} {response.text}")
+            return False
+    except requests.exceptions.RequestException as e:
+        print(f"⚠️  Error setting default workspace: {e}")
+        return False
 
 
 def ensure_sample_data(workspace_id, sample_data_id):
@@ -431,25 +485,62 @@ def create_prometheus_datasource(workspace_id):
     # Check if datasource already exists
     existing_id = get_existing_prometheus_datasource(datasource_name)
     if existing_id:
-        print(f"✅ Prometheus datasource already exists: {existing_id}")
-        reconciled = reconcile_prometheus_datasource_properties(
-            datasource_name, desired_properties
-        )
-        # Reconciliation goes through DELETE + POST, so the saved-object
-        # id may have changed — re-read before associating.
-        datasource_id = existing_id
-        if reconciled:
-            datasource_id = get_existing_prometheus_datasource(datasource_name) or existing_id
-        # Associate with workspace if provided
-        if workspace_id and workspace_id != "default":
-            associate_prometheus_with_workspace(workspace_id, datasource_id)
-        return datasource_id
+        # Verify the datasource is functional (masterkey can decrypt it).
+        # On helm upgrades the plugins.query.datasources.encryption.masterkey
+        # may differ from the key used to encrypt the stored secret; the
+        # SQL plugin then surfaces a decryption error on every query. Detect
+        # and wipe so the fresh POST below re-creates it with the current key.
+        broken = False
+        try:
+            verify = requests.get(
+                f"{OPENSEARCH_ENDPOINT}/_plugins/_query/_datasources/{datasource_name}",
+                auth=(USERNAME, PASSWORD),
+                headers={"Content-Type": "application/json"},
+                verify=False,
+                timeout=10,
+            )
+            if verify.status_code == 200 and "error" not in verify.json():
+                pass
+            else:
+                print(f"⚠️  Prometheus datasource exists but is broken (encryption key mismatch). Deleting to recreate...")
+                requests.delete(
+                    f"{OPENSEARCH_ENDPOINT}/_plugins/_query/_datasources/{datasource_name}",
+                    auth=(USERNAME, PASSWORD),
+                    headers={"Content-Type": "application/json"},
+                    verify=False,
+                    timeout=10,
+                )
+                broken = True
+        except requests.exceptions.RequestException:
+            pass
+
+        if not broken:
+            print(f"✅ Prometheus datasource already exists: {existing_id}")
+            reconciled = reconcile_prometheus_datasource_properties(
+                datasource_name, desired_properties
+            )
+            # Reconciliation goes through DELETE + POST, so the saved-object
+            # id may have changed — re-read before associating.
+            datasource_id = existing_id
+            if reconciled:
+                datasource_id = get_existing_prometheus_datasource(datasource_name) or existing_id
+            # Associate with workspace if provided
+            if workspace_id and workspace_id != "default":
+                associate_prometheus_with_workspace(workspace_id, datasource_id)
+            return datasource_id
 
     print("🔧 Creating Prometheus datasource...")
 
+    # Grant anonymous users access to the Prometheus datasource when anonymous auth is enabled.
+    # Otherwise leave allowedRoles empty: the SQL plugin always admits all_access users, so an
+    # empty list and ["all_access"] authorize the same users.
+    allowed_roles = (
+        ["all_access", "opendistro_security_anonymous_role"] if ANONYMOUS_AUTH_ENABLED else []
+    )
+
     payload = {
         "name": datasource_name,
-        "allowedRoles": [],
+        "allowedRoles": allowed_roles,
         "connector": "prometheus",
         "properties": desired_properties,
     }
@@ -2041,6 +2132,10 @@ def main():
     else:
         workspace_id = create_workspace()
 
+    # Set as default workspace so users skip the workspace picker (Helm)
+    if SET_DEFAULT_WORKSPACE:
+        set_default_workspace(workspace_id)
+
     # Create index patterns (idempotent - will skip if already exist)
     # Titles must match exactly what the APM plugin expects
     logs_schema_mappings = '{"otelLogs":{"timestamp":"time","traceId":"traceId","spanId":"spanId","serviceName":"resource.attributes.service.name"}}'
@@ -2106,7 +2201,10 @@ def main():
     # Create overview landing dashboard (becomes the new default)
     create_overview_dashboard(workspace_id)
 
-    # Create self-monitoring dashboards (PromQL explore panels)
+    # Create self-monitoring dashboards (PromQL explore panels). The Kubernetes cluster health
+    # dashboard ships with the Helm chart only; compose has no such file and skips it.
+    if os.path.exists("/config/dashboard-k8s-cluster-health.yaml"):
+        create_promql_dashboard_from_yaml(workspace_id, "/config/dashboard-k8s-cluster-health.yaml")
     create_promql_dashboard_from_yaml(workspace_id, "/config/dashboard-pipeline-health.yaml")
     create_promql_dashboard_from_yaml(workspace_id, "/config/dashboard-opensearch-health.yaml")
 
@@ -2159,8 +2257,9 @@ def main():
     # Output summary
     print()
     print("🎉 Observability Stack Ready!")
-    print(f"👤 Username: {USERNAME}")
-    print(f"🔑 Password: {PASSWORD}")
+    if PRINT_CREDENTIALS:
+        print(f"👤 Username: {USERNAME}")
+        print(f"🔑 Password: {PASSWORD}")
 
     # Generate appropriate dashboard URL
     if workspace_id and workspace_id != "default":

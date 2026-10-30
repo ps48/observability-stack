@@ -50,6 +50,13 @@ spec:
               value: "https://{{ .Values.opensearchServiceName | default "opensearch-cluster-master" }}:9200"
             - name: ANONYMOUS_AUTH_ENABLED
               value: {{ ((.Values.anonymousAuth).enabled) | default false | quote }}
+            # The init script is shared with Docker Compose (files/init-opensearch-dashboards.py
+            # is a copy of docker-compose/opensearch-dashboards/init/); these turn on the
+            # Kubernetes behaviour: land users in the workspace, keep the password out of Job logs.
+            - name: SET_DEFAULT_WORKSPACE
+              value: "true"
+            - name: PRINT_CREDENTIALS
+              value: "false"
             - name: INSTALL_EBPF_EXAMPLE_DASHBOARD
               value: {{ .Values.ebpfDemo.enabled | default false | quote }}
             - name: ISM_RETENTION_DAYS

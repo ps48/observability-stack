@@ -6,11 +6,17 @@ on:
     paths:
       - 'charts/**'
       - 'test/helm-test.sh'
+      # Shared with the chart (copies checked by test/helm-test.sh)
+      - 'docker-compose/opensearch-dashboards/init/init-opensearch-dashboards.py'
+      - 'docker-compose/data-prepper/genai-evaluation-index-template.json'
   pull_request:
     branches: [main]
     paths:
       - 'charts/**'
       - 'test/helm-test.sh'
+      # Shared with the chart (copies checked by test/helm-test.sh)
+      - 'docker-compose/opensearch-dashboards/init/init-opensearch-dashboards.py'
+      - 'docker-compose/data-prepper/genai-evaluation-index-template.json'
   workflow_dispatch:
 
 jobs:

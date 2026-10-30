@@ -1,0 +1,18 @@
+{{- /* OpenSearch index templates the Data Prepper pipelines install (template_file in
+       templates/data-prepper-pipeline-secret.yaml). Mounted at /usr/share/data-prepper/templates
+       through data-prepper.volumes / volumeMounts in values.yaml, so the name is fixed like the
+       data-prepper-pipeline Secret (subchart values are not templated). Rendered whenever Data
+       Prepper is enabled, also with dataPrepperManageSecret=false, so the mount always resolves.
+       files/genai-evaluation-index-template.json is a copy of
+       docker-compose/data-prepper/genai-evaluation-index-template.json. */ -}}
+{{- if index .Values "data-prepper" "enabled" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: data-prepper-templates
+  labels:
+    {{- include "observability-stack.labels" . | nindent 4 }}
+data:
+  genai-evaluation-index-template.json: |
+{{ .Files.Get "files/genai-evaluation-index-template.json" | indent 4 }}
+{{- end }}

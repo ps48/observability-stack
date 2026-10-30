@@ -1,0 +1,56 @@
+suite: data prepper genai evaluations
+templates:
+  - templates/data-prepper-pipeline-secret.yaml
+  - templates/data-prepper-templates-configmap.yaml
+tests:
+  - it: should route the three evaluation event names to the evaluation pipeline
+    template: templates/data-prepper-pipeline-secret.yaml
+    asserts:
+      - matchRegex:
+          path: stringData["pipelines.yaml"]
+          pattern: '- evaluations: .getEventType\(\) == "LOG" and \(/eventName == "gen_ai.evaluation.result" or /eventName == "opensearch.test_case.result" or /eventName == "opensearch.test_suite_run.result"\)'
+      - matchRegex:
+          path: stringData["pipelines.yaml"]
+          pattern: '- logs: .getEventType\(\) == "LOG" and /eventName != "gen_ai.evaluation.result" and /eventName != "opensearch.test_case.result" and /eventName != "opensearch.test_suite_run.result"'
+
+  - it: should write evaluations with the genai-evaluation index template
+    template: templates/data-prepper-pipeline-secret.yaml
+    asserts:
+      - matchRegex:
+          path: stringData["pipelines.yaml"]
+          pattern: 'index: "otel-v1-genai-evaluation-%\{yyyy.MM.dd\}"'
+      - matchRegex:
+          path: stringData["pipelines.yaml"]
+          pattern: 'template_file: /usr/share/data-prepper/templates/genai-evaluation-index-template.json'
+      - matchRegex:
+          path: stringData["pipelines.yaml"]
+          pattern: 'startsWith\(/instrumentationScope/name, "aws.bedrock_agentcore"\)'
+
+  - it: should ship the index template in the data-prepper-templates ConfigMap
+    template: templates/data-prepper-templates-configmap.yaml
+    asserts:
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.name
+          value: data-prepper-templates
+      - matchRegex:
+          path: data["genai-evaluation-index-template.json"]
+          pattern: '"otel-v1-genai-evaluation-\*"'
+
+  - it: should render the templates ConfigMap even when the pipeline Secret is user-managed
+    template: templates/data-prepper-templates-configmap.yaml
+    set:
+      dataPrepperManageSecret: false
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  - it: should not render the templates ConfigMap without Data Prepper
+    template: templates/data-prepper-templates-configmap.yaml
+    set:
+      data-prepper:
+        enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
