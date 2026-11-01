@@ -133,6 +133,16 @@
                   "properties": {
                     "name": {
                       "type": "keyword"
+                    },
+                    "version": {
+                      "type": "keyword"
+                    },
+                    "description": {
+                      "type": "keyword",
+                      "ignore_above": 1024
+                    },
+                    "id": {
+                      "type": "keyword"
                     }
                   }
                 },
@@ -355,6 +365,13 @@
                       }
                     }
                   }
+                }
+              }
+            },
+            "agent": {
+              "properties": {
+                "version": {
+                  "type": "keyword"
                 }
               }
             }
