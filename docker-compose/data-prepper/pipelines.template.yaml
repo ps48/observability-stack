@@ -127,14 +127,15 @@ genai-evaluation-pipeline:
         with_keys: ["/attributes/derived.evaluation.level"]
     - add_entries:
         entries:
-          # Source from the instrumentation scope: AgentCore's scope, or the scope attribute
-          # every OpenSearch GenAI SDK logger carries; anything else is a generic OTel evaluator.
+          # Source from the instrumentation scope: AgentCore's scope, or the OpenSearch GenAI SDKs'
+          # scope name (opensearch-genai-observability-sdk-py / -ts; older SDKs set the scope attribute
+          # opensearch.genai.sdk.name instead); anything else is a generic OTel evaluator.
           - key: "/attributes/derived.evaluation.source"
             value: "agentcore"
             add_when: '/eventName == "gen_ai.evaluation.result" and (startsWith(/instrumentationScope/name, "aws.bedrock_agentcore") or /attributes/aws.bedrock_agentcore.evaluation_level != null)'
           - key: "/attributes/derived.evaluation.source"
             value: "opensearch-sdk"
-            add_when: '/eventName == "gen_ai.evaluation.result" and /attributes/derived.evaluation.source == null and /instrumentationScope/attributes/opensearch.genai.sdk.name != null'
+            add_when: '/eventName == "gen_ai.evaluation.result" and /attributes/derived.evaluation.source == null and (startsWith(/instrumentationScope/name, "opensearch-genai-observability-sdk") or /instrumentationScope/attributes/opensearch.genai.sdk.name != null)'
           - key: "/attributes/derived.evaluation.source"
             value: "otel"
             add_when: '/eventName == "gen_ai.evaluation.result" and /attributes/derived.evaluation.source == null'
@@ -147,6 +148,7 @@ genai-evaluation-pipeline:
           - key: "/attributes/derived.evaluation.target_trace_id"
             value_expression: "/traceId"
             add_when: "/traceId != null and /traceId != \"\""
+          # Legacy: older SDKs put the trace of a trace-level result in an attribute.
           - key: "/attributes/derived.evaluation.target_trace_id"
             value_expression: "/attributes/opensearch.evaluation.trace_id"
             add_when: "/attributes/derived.evaluation.target_trace_id == null and /attributes/opensearch.evaluation.trace_id != null"

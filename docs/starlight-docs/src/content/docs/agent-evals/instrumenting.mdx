@@ -103,7 +103,7 @@ score(
 )
 
 # Trace-level: only a trace id is known. No span id is invented; the event carries
-# opensearch.evaluation.trace_id and level "trace".
+# the trace id as its own traceId (no spanId) and level "trace".
 score("task_success", 1.0, trace_id="6ebb9835f43af1552f2cebb9f5165e39", assessment="pass")
 
 # Session-level: judge a whole conversation
@@ -156,16 +156,16 @@ The Python name is listed first, then the TypeScript name where it differs.
 |---|---|---|
 | `name` | `gen_ai.evaluation.name` | Evaluation (metric) name, for example `answer_quality`. Required. |
 | `value` | `gen_ai.evaluation.score.value` | Numeric score (double). |
-| `label` | `gen_ai.evaluation.score.label` | Low-cardinality label, for example `correct`. A label is not a verdict. |
+| `label` | `gen_ai.evaluation.score.label` | Low-cardinality label, for example `correct`. Only `pass` / `fail` is read as a verdict. |
 | `explanation` | `gen_ai.evaluation.explanation` | Evaluator rationale. |
 | `trace_id` / `traceId`, `span_id` / `spanId` | event trace context | The evaluated span. With only a trace id, the result is trace-level. |
 | `level` | `opensearch.evaluation.level` | `span`, `trace`, `session`, or `tool_call`. Inferred when omitted. |
-| `evaluator`, `evaluator_version` / `evaluatorVersion` | instrumentation scope, `opensearch.evaluation.evaluator.name` / `.version` | Who produced the result. Defaults to the SDK scope. |
+| `evaluator`, `evaluator_version` / `evaluatorVersion` | `opensearch.evaluation.evaluator.name` / `.version` | Who produced the result. The instrumentation scope is always the SDK. |
 | `evaluator_type` / `evaluatorType` | `opensearch.evaluation.evaluator.type` | `llm_judge`, `code`, `human`, or `external`. |
 | `threshold` | `opensearch.evaluation.score.threshold` | Pass threshold (see below). |
 | `direction` | `opensearch.evaluation.score.direction` | `maximize` (default with a threshold) or `minimize`. |
 | `score_min` / `scoreMin`, `score_max` / `scoreMax` | `opensearch.evaluation.score.min` / `.max` | Scale bounds. Used to normalize charts and deltas. |
-| `assessment` | `opensearch.evaluation.assessment` | Explicit verdict: `pass` or `fail` (booleans accepted). |
+| `assessment` | `gen_ai.evaluation.score.label` | Explicit verdict: `pass` or `fail` (booleans accepted), recorded as the label. |
 | `conversation_id` / `conversationId` | `gen_ai.conversation.id` | Evaluated session. |
 | `agent_name` / `agentName` | `gen_ai.agent.name` | Evaluated agent. |
 | `response_id` / `responseId` | `gen_ai.response.id` | Evaluated completion. |
@@ -178,13 +178,15 @@ The Python name is listed first, then the TypeScript name where it differs.
 Results without a declared rule show as **Scored**, not pass/fail. You can declare a rule in two ways:
 
 ```python
-score("answer_quality", 3.0, threshold=4, score_min=1, score_max=5)  # assessment=fail
-score("latency_s", 9.2, threshold=12, direction="minimize")          # assessment=pass
+score("answer_quality", 3.0, threshold=4, score_min=1, score_max=5)  # label=fail
+score("latency_s", 9.2, threshold=12, direction="minimize")          # label=pass
 score("tool_selection", 1.0, assessment="pass")                      # explicit verdict
 ```
 
-- **`assessment`** - an explicit verdict. It always wins. Invalid values are dropped with a warning.
-- **`threshold`** (+ `direction`) - the SDK records the threshold and also computes and records the assessment. With `maximize`, the result passes when `value >= threshold`; with `minimize`, it passes when `value <= threshold`.
+- **`assessment`** - an explicit verdict. It always wins, and replaces a `label`. Invalid values are dropped with a warning.
+- **`threshold`** (+ `direction`) - the SDK records the threshold and, unless you set a `label`, also computes the verdict. With `maximize`, the result passes when `value >= threshold`; with `minimize`, it passes when `value <= threshold`.
+
+The verdict is recorded as `gen_ai.evaluation.score.label` = `pass` or `fail`, as in the OpenTelemetry GenAI examples. Any producer can send it: a `pass` / `fail` label (case-insensitive) decides the verdict in OpenSearch Dashboards.
 
 ## `evaluate()`: an offline run
 
@@ -260,7 +262,7 @@ await provider.forceFlush();
 - `name` - the evaluation name for number and boolean results, and for the error grade. Defaults to the function name.
 - `threshold` and `direction` - the pass rule. `direction` defaults to `maximize` when a threshold is set.
 - `score_min` / `score_max` (TS: `scoreMin` / `scoreMax`) - the scale bounds.
-- `evaluator` - the instrumentation scope and `evaluator.name`. Defaults to the function name.
+- `evaluator` - `opensearch.evaluation.evaluator.name`. Defaults to the function name.
 - `evaluator_type` (TS: `evaluatorType`).
 
 Fields set on a returned `EvalScore` (`assessment`, `passed`, `threshold`, `direction`, bounds) take precedence over the declaration.
@@ -271,6 +273,10 @@ Fields set on a returned `EvalScore` (`assessment`, `passed`, `threshold`, `dire
 - A scorer that raises emits a grade with `error.type` and no value, under its declared name, and marks the case `error`.
 - Otherwise a case is `fail` if any of its scores has a `fail` verdict, and `pass` if not.
 - The run status (`test.suite.run.status`) is `failure` only if a case errored.
+
+**CI/CD.** When the run happens in CI, the run event, the case and score events and the agent root spans also carry the OpenTelemetry `cicd.pipeline.name`, `cicd.pipeline.run.id` and `cicd.pipeline.run.url.full`, read from GitHub Actions (`GITHUB_WORKFLOW`, `GITHUB_RUN_ID`, the run URL), GitLab CI (`CI_PIPELINE_NAME`, `CI_PIPELINE_ID`, `CI_PIPELINE_URL`) or Jenkins (`JOB_NAME`, `BUILD_ID`, `BUILD_URL`). Pass `ci_pipeline={...}` (TS: `ciPipeline`) to set or override them. Nothing is added outside CI.
+
+**Test ids.** `test.suite.run.id` and `test.case.id` are proposed OpenTelemetry attributes ([semantic-conventions#1262](https://github.com/open-telemetry/semantic-conventions/issues/1262), [semantic-conventions-genai#79](https://github.com/open-telemetry/semantic-conventions-genai/issues/79)); the other `test.*` names are OpenTelemetry's.
 
 **Run metadata.** `metadata` is copied to the case and run events. The Evaluations UI reads `agent.version` and `agent.model` for the Agent version and Model columns. It also shows Tokens and Cost columns when metadata keys end in `tokens` or contain `cost`.
 

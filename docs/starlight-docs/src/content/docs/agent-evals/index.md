@@ -23,7 +23,7 @@ flowchart LR
 | Term | Meaning |
 |---|---|
 | **Evaluation result** (grade) | One judgment of one target: a name (`gen_ai.evaluation.name`), an optional numeric score, an optional label, an explanation, and an optional verdict. One `gen_ai.evaluation.result` event. |
-| **Evaluator** | Whatever produced the result: an LLM judge, a code check, a human reviewer, or an external tool. Recorded as the event's instrumentation scope and `opensearch.evaluation.evaluator.name`. |
+| **Evaluator** | Whatever produced the result: an LLM judge, a code check, a human reviewer, or an external tool. Recorded as `opensearch.evaluation.evaluator.name`. |
 | **Level** | What was judged: a single `span`, a whole `trace`, a `session` (multi-turn conversation), or a `tool_call`. |
 | **Test suite** | A named, stable set of test cases (`test.suite.name`), for example `checkout-agent-golden`. |
 | **Evaluation run** | One execution of a suite (`test.suite.run.id`). Each test case runs the agent once, as its own trace, and gets a pass, fail, or error status. |
@@ -40,15 +40,15 @@ In both cases the agent's own trace is unchanged: the SDK adds no harness spans 
 
 ## Verdict rules
 
-A pass/fail verdict comes only from a rule someone declared. A plain number, or a label that happens to say "pass", is not a verdict. OpenSearch Dashboards applies these rules in order, and the first that decides wins:
+A pass/fail verdict comes only from a rule someone declared. A plain number, or a label such as "correct", is not a verdict; a `pass` / `fail` label is, as in the OpenTelemetry GenAI examples. OpenSearch Dashboards applies these rules in order, and the first that decides wins:
 
 1. **Evaluator error** - `error.type` is set (the evaluator itself failed, so there is no verdict).
-2. **Producer assessment** - `opensearch.evaluation.assessment` is `pass` or `fail`.
+2. **Producer verdict** - `gen_ai.evaluation.score.label` is `pass` or `fail` (case-insensitive). Results from older SDKs that sent `opensearch.evaluation.assessment` are still read.
 3. **Producer threshold** - `opensearch.evaluation.score.threshold` with `opensearch.evaluation.score.direction`: with `maximize` (the default), values at or above the threshold pass; with `minimize`, values at or below it pass.
 4. **Built-in rules** for a few known third-party evaluators.
 5. Otherwise **Scored**: shown in gray, with its mean or top label, and left out of pass rates.
 
-The SDKs declare rules for you. Pass `threshold=` or `assessment=` to `score()`, or decorate a scorer with `@scorer(threshold=...)`. When a value and a threshold are given, the SDK also records the computed assessment. See [Instrument evaluations](/docs/agent-evals/instrumenting/#declaring-verdicts).
+The SDKs declare rules for you. Pass `threshold=` or `assessment=` to `score()`, or decorate a scorer with `@scorer(threshold=...)`. When a value and a threshold are given, the SDK also records the computed verdict as the label. See [Instrument evaluations](/docs/agent-evals/instrumenting/#declaring-verdicts).
 
 A test case's status follows the same rules on the producer side: `error` if the agent or a scorer raised, else `fail` if any of its scores has a `fail` verdict, else `pass`.
 

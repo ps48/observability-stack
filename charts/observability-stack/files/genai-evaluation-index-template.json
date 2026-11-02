@@ -374,6 +374,31 @@
                   "type": "keyword"
                 }
               }
+            },
+            "cicd": {
+              "properties": {
+                "pipeline": {
+                  "properties": {
+                    "name": {
+                      "type": "keyword"
+                    },
+                    "run": {
+                      "properties": {
+                        "id": {
+                          "type": "keyword"
+                        },
+                        "url": {
+                          "properties": {
+                            "full": {
+                              "type": "keyword"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
             }
           }
         }

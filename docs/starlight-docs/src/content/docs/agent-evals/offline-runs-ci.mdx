@@ -180,6 +180,18 @@ The action has two outputs. `run-id` is the run's `test.suite.run.id`. `run-url`
 
 The job fails with exit code 1 when an evaluator mean is below its minimum, or when a gated evaluator produced no scores. Exit code 2 means a configuration error.
 
+### CI/CD attributes
+
+In CI the SDK stamps the OpenTelemetry [CI/CD attributes](https://opentelemetry.io/docs/specs/semconv/registry/attributes/cicd/) on the run event, the case and score events and the agent root spans, so every run links back to the pipeline run that produced it. You don't need to configure anything:
+
+| Attribute | GitHub Actions | GitLab CI | Jenkins |
+|---|---|---|---|
+| `cicd.pipeline.name` | `GITHUB_WORKFLOW` | `CI_PIPELINE_NAME` | `JOB_NAME` |
+| `cicd.pipeline.run.id` | `GITHUB_RUN_ID` | `CI_PIPELINE_ID` | `BUILD_ID` |
+| `cicd.pipeline.run.url.full` | `$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID` | `CI_PIPELINE_URL` | `BUILD_URL` |
+
+Pass `ci_pipeline={"cicd.pipeline.run.id": ...}` to `evaluate()` (TS: `ciPipeline`) to set them from another CI system. Outside CI nothing is added. Query a pipeline's runs with `` `attributes.cicd.pipeline.run.id` = '<id>' ``.
+
 <Aside type="note">
 The summary table's "Pass" column counts `value >= pass-threshold` for a quick read in the job page. The verdicts in OpenSearch Dashboards come from the rules each scorer declares (see [Verdict rules](/docs/agent-evals/#verdict-rules)), so declare thresholds on your scorers too.
 </Aside>
