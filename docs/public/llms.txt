@@ -9,8 +9,8 @@
 ## Agent Evals
 
 - [Agent Evals](https://observability.opensearch.org/docs/agent-evals/): Measure the quality of your AI agents with OpenTelemetry evaluation events - score live traces, run offline test suites in CI, and review results in OpenSearch Dashboards
-- [Evaluation Data Model & Storage](https://observability.opensearch.org/docs/agent-evals/data-model/): The evaluation event contract (gen_ai.evaluation.result, opensearch.test_case.result, opensearch.test_suite_run.result), the otel-v1-genai-evaluation index, derived fields, and the evaluations dataset
-- [Evaluation Integrations](https://observability.opensearch.org/docs/agent-evals/evaluation-integrations/): Bridge external evaluation frameworks like DeepEval, RAGAS, MLflow, and pytest into the observability stack
+- [Evaluation Data Model & Storage](https://observability.opensearch.org/docs/agent-evals/data-model/): The evaluation event contract (gen_ai.evaluation.result), the otel-v1-genai-evaluation index, and the evaluations dataset
+- [Evaluation Integrations](https://observability.opensearch.org/docs/agent-evals/evaluation-integrations/): Bridge external evaluation frameworks like DeepEval, RAGAS, MLflow, pytest, and Amazon Bedrock AgentCore into the observability stack
 - [Evaluations UI](https://observability.opensearch.org/docs/agent-evals/evaluations-ui/): Review agent evaluation results in OpenSearch Dashboards: Overview, Results, Evaluation runs, Compare, drill-downs, and evaluations in Agent Traces
 - [Instrument Evaluations](https://observability.opensearch.org/docs/agent-evals/instrumenting/): Emit agent evaluation results with the OpenSearch GenAI SDKs: score(), @scorer and defineScorer, evaluate(), Benchmark, and the traces and logs endpoints
 - [Offline Runs & CI](https://observability.opensearch.org/docs/agent-evals/offline-runs-ci/): Run an agent evaluation suite on every pull request with the GitHub Action, link the run in OpenSearch Dashboards, and fail the job on a score regression

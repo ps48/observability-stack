@@ -139,7 +139,6 @@ def main() -> None:
                 "test.suite.run.id": run_id,
                 "test.suite.name": "helpfulness_eval",
                 "test.case.id": eval_name,
-                "test.case.result.status": "pass" if r.test_pass else "fail",
             },
         )
 

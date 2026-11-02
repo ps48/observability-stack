@@ -357,7 +357,7 @@ Without `threshold` or a `pass` / `fail` `label`, a result shows as "Scored" (no
 
 ## `evaluate()`
 
-Runs a synchronous task against a dataset, scores each output, and records the run as log events. Each case's agent run stays its own trace, and its root span is stamped with the `test.*` ids. Per score, it emits a `gen_ai.evaluation.result` event. Per case, it emits an `opensearch.test_case.result` event. At the end, it emits one `opensearch.test_suite_run.result` event. Wrap scorers in `defineScorer()` to declare their name and pass rule.
+Runs a synchronous task against a dataset, scores each output, and records the run as log events. Each case's agent run stays its own trace, and its root span is stamped with the `test.*` ids. Per score, it emits a `gen_ai.evaluation.result` event with the run and case ids. When the task throws, it emits one per declared scorer with `error.type` and no score. Wrap scorers in `defineScorer()` to declare their name and pass rule.
 
 ```typescript
 import { defineScorer, evaluate } from "@opensearch-project/genai-observability-sdk-ts";
@@ -374,7 +374,6 @@ const result = evaluate({
   ],
   scores: [accuracy],
   agentVersion: "v2",
-  recordIo: true,
 });
 
 console.log(result.summary);
@@ -386,19 +385,19 @@ console.log(result.summary);
 | `task` | `(input: unknown) => unknown` | Synchronous function that takes input and returns output. |
 | `data` | `Array<{ input, expected?, caseId?, caseName? }>` | Test cases. |
 | `scores` | `Array<ScorerFn \| Scorer>` | Scorers: `(input, output, expected)` returning `EvalScore`, `EvalScore[]`, `number`, or `boolean`, optionally wrapped with `defineScorer()`. |
-| `metadata` | `Record<string, unknown>` | Copied to the case and run events (reserved keys are filtered). |
-| `recordIo` | `boolean` | Record input/expected/output on the case event (default `false`). |
+| `metadata` | `Record<string, unknown>` | Copied to every score event (reserved keys are filtered). |
+| `runId` | `string` | Run id (`test.suite.run.id`). Generated when absent; an empty string is rejected. Reuse one id to merge CI shards into one run or to re-score a run. |
 
 ---
 
 ## `Benchmark`
 
-Uploads pre-computed evaluation results from any framework as the same case, score, and run events. It creates no spans.
+Uploads pre-computed evaluation results from any framework as the same score events. It creates no spans. It accepts the same `metadata` and `runId` options.
 
 ```typescript
 import { Benchmark } from "@opensearch-project/genai-observability-sdk-ts";
 
-const bench = new Benchmark("nightly-eval", { metadata: { model: "gpt-4o" }, recordIo: true });
+const bench = new Benchmark("nightly-eval", { metadata: { model: "gpt-4o" } });
 
 bench.log({ input: "What is Python?", output: "A language", scores: { accuracy: 1.0 } });
 

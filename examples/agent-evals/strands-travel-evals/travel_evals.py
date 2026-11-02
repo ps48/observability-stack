@@ -1,7 +1,7 @@
 """Agent evals POC data: a Strands travel agent on Bedrock, evaluated two ways.
 
-  experiment --version v1|v2   offline run over a golden dataset (test_suite_run / test_case,
-                               code checks + an LLM judge), for the Evaluation runs view.
+  experiment --version v1|v2   offline run over a golden dataset (code checks + an LLM
+                               judge), for the Evaluation runs view.
   online --sessions N          multi-turn production-style sessions with inline LLM-judge
                                scores per turn and one session-level score.
 
@@ -230,7 +230,6 @@ def run_experiment(version: str) -> None:
         scores=[tool_selection, quality, latency_budget],
         agent_version=version,
         metadata={"agent.model": MODEL_ID},
-        record_io=True,
     )
     print(result.summary)
 

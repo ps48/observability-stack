@@ -29,7 +29,7 @@ uv run python main.py <session_id>
 uv run python main.py --trace-id <trace_id>
 ```
 
-Score spans appear in OpenSearch Dashboards on the same trace as the agent spans, tagged with `test.suite.run.id`, `test.case.id`, and `test.case.result.status` (pass/fail).
+Score spans appear in OpenSearch Dashboards on the same trace as the agent spans, tagged with `test.suite.run.id` and `test.case.id`.
 
 ## Configuration
 

@@ -92,7 +92,6 @@ Agent Evals needs a Python SDK release later than `opensearch-genai-observabilit
         ],
         scores=[contains_expected, answer_length],
         agent_version="v1",
-        record_io=True,
     )
 
     provider.force_flush()  # flush spans and evaluation events before exit
@@ -119,9 +118,7 @@ Agent Evals needs a Python SDK release later than `opensearch-genai-observabilit
     The run sends the following:
 
     - 4 agent traces (`invoke_agent mock_agent`), each root span stamped with `test.suite.name`, `test.suite.run.id`, and `test.case.id`.
-    - 8 `gen_ai.evaluation.result` events, one per score, each parented to its agent's root span.
-    - 4 `opensearch.test_case.result` events. The `hamlet` case has status `fail`.
-    - 1 `opensearch.test_suite_run.result` event with the case counts.
+    - 8 `gen_ai.evaluation.result` events, one per score, each parented to its agent's root span and carrying the run and case ids. The `hamlet` case fails `contains_expected`.
 
 5. **Check the events in OpenSearch** (optional)
 
@@ -132,16 +129,16 @@ Agent Evals needs a Python SDK release later than `opensearch-genai-observabilit
       "https://localhost:9200/otel-v1-genai-evaluation-*/_search?size=0" \
       -H 'Content-Type: application/json' \
       -d '{"query":{"term":{"attributes.test.suite.name":"quickstart-suite"}},
-           "aggs":{"events":{"terms":{"field":"eventName"}}}}'
+           "aggs":{"runs":{"terms":{"field":"attributes.test.suite.run.id"}}}}'
     ```
 
-    You should see three `eventName` buckets: `gen_ai.evaluation.result` (8), `opensearch.test_case.result` (4), and `opensearch.test_suite_run.result` (1). If you run the script more than once, the counts add up.
+    You should see one bucket per run id, with 8 results each.
 
 6. **Open the run in OpenSearch Dashboards**
 
     Open [http://localhost:5601](http://localhost:5601) (`admin` / `My_password_123!@#`) and go to **Agent Monitoring > Evaluations**:
 
-    - **Evaluation runs** lists `quickstart-suite` with 3 of 4 test cases passed. Select the run to see its scores by test case, and the failing `hamlet` case with its input, expected, and output.
+    - **Evaluation runs** lists `quickstart-suite` with 3 of 4 test cases passed. Select the run to see its scores by test case, and the failing `hamlet` case with its agent trace.
     - **Overview** shows `contains_expected` and `answer_length` with a 75% pass rate each.
     - Select **Open trace** on a test case to jump to the agent trace in Agent Traces. Its **Evaluations** tab lists the results for that trace.
 

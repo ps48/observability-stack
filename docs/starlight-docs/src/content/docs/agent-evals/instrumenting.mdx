@@ -11,8 +11,8 @@ The [Python](/docs/send-data/ai-agents/python/) and [TypeScript](/docs/send-data
 |---|---|---|
 | `score()` | Record one result for a span, trace, or session (online or after the fact) | 1 `gen_ai.evaluation.result` event |
 | `@scorer` (Python) / `defineScorer` (TS) | Declare a scorer's evaluation name and pass rule | - |
-| `evaluate()` | Run the agent over a dataset, score every output, record a run | grades + `opensearch.test_case.result` + `opensearch.test_suite_run.result` |
-| `Benchmark` | Upload results you already computed elsewhere as a run | the same three event types, no spans |
+| `evaluate()` | Run the agent over a dataset, score every output, record a run | 1 `gen_ai.evaluation.result` event per score, with run and case ids |
+| `Benchmark` | Upload results you already computed elsewhere as a run | the same events, no spans |
 
 All of them emit OpenTelemetry **log events** over OTLP logs. None of them adds spans to the agent's trace. For the event fields, see [Data model & storage](/docs/agent-evals/data-model/).
 
@@ -222,7 +222,6 @@ evaluate(
     scores=[mentions_price, on_topic, answer_quality],
     agent_version="v2",                           # gen_ai.agent.version
     metadata={"agent.model": "my-model"},
-    record_io=True,                               # store input, expected, output on the case event
 )
 provider.force_flush()
 ```
@@ -249,7 +248,6 @@ evaluate({
   data: [{ caseId: "lisbon", input: "Cheapest flight to Lisbon?", expected: "Lisbon" }],
   scores: [mentionsPrice, onTopic],
   agentVersion: "v2",
-  recordIo: true,
 });
 await provider.forceFlush();
 ```
@@ -269,29 +267,28 @@ Fields set on a returned `EvalScore` (`label`, `passed`, `threshold`, `direction
 
 **Status and errors:**
 
-- A task that raises does not stop the run. Its case gets status `error` with `error.type`, and its scorers are skipped.
-- A scorer that raises emits a grade with `error.type` and no value, under its declared name, and marks the case `error`.
-- Otherwise a case is `fail` if any of its scores has a `fail` verdict, and `pass` if not.
-- The run status (`test.suite.run.status`) is `failure` only if a case errored.
+- A task that raises does not stop the run. Its scorers are skipped, and the SDK emits one grade per declared scorer with `error.type` set to the exception class name and no score.
+- A scorer that raises emits a grade with `error.type` and no score, under its declared name.
+- A case is `error` if any of its grades has `error.type`, `fail` if any has a `fail` verdict, and `pass` otherwise.
 
-**CI/CD.** When the run happens in CI, the run event, the case and score events and the agent root spans also carry the OpenTelemetry `cicd.pipeline.name`, `cicd.pipeline.run.id` and `cicd.pipeline.run.url.full`, read from GitHub Actions (`GITHUB_WORKFLOW`, `GITHUB_RUN_ID`, the run URL), GitLab CI (`CI_PIPELINE_NAME`, `CI_PIPELINE_ID`, `CI_PIPELINE_URL`) or Jenkins (`JOB_NAME`, `BUILD_ID`, `BUILD_URL`). Pass `ci_pipeline={...}` (TS: `ciPipeline`) to set or override them. Nothing is added outside CI.
+**CI/CD.** When the run happens in CI, the grades and the agent root spans also carry the OpenTelemetry `cicd.pipeline.name`, `cicd.pipeline.run.id` and `cicd.pipeline.run.url.full`, read from GitHub Actions (`GITHUB_WORKFLOW`, `GITHUB_RUN_ID`, the run URL), GitLab CI (`CI_PIPELINE_NAME`, `CI_PIPELINE_ID`, `CI_PIPELINE_URL`) or Jenkins (`JOB_NAME`, `BUILD_ID`, `BUILD_URL`). Pass `ci_pipeline={...}` (TS: `ciPipeline`) to set or override them. Nothing is added outside CI.
 
 **Test ids.** `test.suite.run.id` and `test.case.id` are proposed OpenTelemetry attributes ([semantic-conventions#1262](https://github.com/open-telemetry/semantic-conventions/issues/1262), [semantic-conventions-genai#79](https://github.com/open-telemetry/semantic-conventions-genai/issues/79)); the other `test.*` names are OpenTelemetry's.
 
-**Run metadata.** `metadata` is copied to the case and run events. The Evaluations UI reads `agent.model` for the Model column; the Agent version column is `gen_ai.agent.version` (`agent_version=` / `agentVersion`). It also shows Tokens and Cost columns when metadata keys end in `tokens` or contain `cost`.
+**Run metadata.** `metadata` is copied to every grade of the run. The Evaluations UI reads `agent.model` for the Model column; the Agent version column is `gen_ai.agent.version` (`agent_version=` / `agentVersion`). It also shows Tokens and Cost columns when metadata keys end in `tokens` or contain `cost`.
 
 <Aside type="note">
-`evaluate()` stamps root spans through a span processor on the global SDK `TracerProvider`, so instrument the agent with the global provider (`@observe` after `register()`). If the task starts no span, the case and score events carry no trace context. In TypeScript, `task` must be synchronous. With an OTel JS 2.x provider, add `TestCaseSpanProcessor` to it yourself. Scorers run outside the agent trace, so a traced LLM judge gets its own trace.
+`evaluate()` stamps root spans through a span processor on the global SDK `TracerProvider`, so instrument the agent with the global provider (`@observe` after `register()`). If the task starts no span, its grades carry no trace context. In TypeScript, `task` must be synchronous. With an OTel JS 2.x provider, add `TestCaseSpanProcessor` to it yourself. Scorers run outside the agent trace, so a traced LLM judge gets its own trace.
 </Aside>
 
 ## `Benchmark`: upload existing results
 
-Use `Benchmark` when another tool already produced the scores. Each `log()` emits one `opensearch.test_case.result` event and one `gen_ai.evaluation.result` event per score. `close()` (or leaving the `with` block) emits the run event. No spans are created. Pass the agent run's `trace_id` and `span_id` to link a case to its trace.
+Use `Benchmark` when another tool already produced the scores. Each `log()` emits one `gen_ai.evaluation.result` event per score, with the run and case ids and the run metadata. No spans are created. Pass the agent run's `trace_id` and `span_id` to link a case to its trace.
 
 ```python
 from opensearch_genai_observability_sdk_py import Benchmark, EvalScore
 
-with Benchmark(name="nightly-eval", agent_version="v3", record_io=True) as b:
+with Benchmark(name="nightly-eval", agent_version="v3") as b:
     b.log(input="What is Python?", output="A language", scores={"accuracy": 1.0})
     b.log(
         input="Capital of France?",
@@ -302,7 +299,7 @@ with Benchmark(name="nightly-eval", agent_version="v3", record_io=True) as b:
     )
 ```
 
-`log()` also accepts `case_id`, `case_name`, `status` (`pass` / `fail` / `error`), `error`, `error_type`, and `duration_ms`. Examples for DeepEval, RAGAS, MLflow, and pytest are in [Evaluation integrations](/docs/agent-evals/evaluation-integrations/).
+`log()` also accepts `case_id` and `case_name`. Pass `run_id=` (TS: `runId`) to add results to an existing run, see [Run ids](/docs/agent-evals/offline-runs-ci/#run-ids). Examples for DeepEval, RAGAS, MLflow, and pytest are in [Evaluation integrations](/docs/agent-evals/evaluation-integrations/).
 
 ## Scoring stored traces
 

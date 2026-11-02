@@ -3,15 +3,15 @@ templates:
   - templates/data-prepper-pipeline-secret.yaml
   - templates/data-prepper-templates-configmap.yaml
 tests:
-  - it: should route the three evaluation event names to the evaluation pipeline
+  - it: should route only gen_ai.evaluation.result to the evaluation pipeline
     template: templates/data-prepper-pipeline-secret.yaml
     asserts:
       - matchRegex:
           path: stringData["pipelines.yaml"]
-          pattern: '- evaluations: .getEventType\(\) == "LOG" and \(/eventName == "gen_ai.evaluation.result" or /eventName == "opensearch.test_case.result" or /eventName == "opensearch.test_suite_run.result"\)'
+          pattern: '- evaluations: .getEventType\(\) == "LOG" and /eventName == "gen_ai.evaluation.result".\n'
       - matchRegex:
           path: stringData["pipelines.yaml"]
-          pattern: '- logs: .getEventType\(\) == "LOG" and /eventName != "gen_ai.evaluation.result" and /eventName != "opensearch.test_case.result" and /eventName != "opensearch.test_suite_run.result"'
+          pattern: '- logs: .getEventType\(\) == "LOG" and /eventName != "gen_ai.evaluation.result".\n'
 
   - it: should write evaluations with the genai-evaluation index template
     template: templates/data-prepper-pipeline-secret.yaml
@@ -23,15 +23,22 @@ tests:
           path: stringData["pipelines.yaml"]
           pattern: 'template_file: /usr/share/data-prepper/templates/genai-evaluation-index-template.json'
 
-  - it: should copy other producers' level and session onto the canonical names, never derived fields
+  - it: should only copy the timestamp in the evaluation pipeline
     template: templates/data-prepper-pipeline-secret.yaml
     asserts:
       - matchRegex:
           path: stringData["pipelines.yaml"]
-          pattern: 'key: "/attributes/opensearch.evaluation.level"'
-      - matchRegex:
+          pattern: '(?s)genai-evaluation-pipeline:\n.*?\n +processor:\n +- copy_values:\n +entries:\n +- from_key: "time"\n +to_key: "@timestamp"\n +sink:\n'
+
+  - it: should let OpenSearch generate evaluation document ids and keep no derived fields
+    template: templates/data-prepper-pipeline-secret.yaml
+    asserts:
+      - notMatchRegex:
           path: stringData["pipelines.yaml"]
-          pattern: 'add_when: "/attributes/gen_ai.conversation.id == null and /attributes/session.id != null"'
+          pattern: '(?s)genai-evaluation-pipeline:.*document_id'
+      - notMatchRegex:
+          path: stringData["pipelines.yaml"]
+          pattern: 'evaluationId'
       - notMatchRegex:
           path: stringData["pipelines.yaml"]
           pattern: 'attributes/derived\.'

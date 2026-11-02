@@ -12,21 +12,20 @@ An **offline run** evaluates the agent against a fixed set of test cases (a suit
 For every test case, `evaluate()` (or `Benchmark`) records:
 
 - **The agent's own trace** (from `evaluate()` only). Its root span is stamped with `test.suite.name`, `test.suite.run.id`, `test.case.id`, and `test.case.name`. No harness spans are added.
-- **One `gen_ai.evaluation.result` event per score**, parented to the agent's root span, with the `test.*` ids copied.
-- **One `opensearch.test_case.result` event**, with these attributes:
-  - the case status, `test.case.result.status`: `pass`, `fail`, or `error`
-  - `error.type` when the agent or a scorer raised
-  - `opensearch.test_case.duration_ms`
-  - `opensearch.test_case.input`, `.expected`, and `.output` when `record_io=True`
-  - the run metadata
-
-At the end of the run, it records **one `opensearch.test_suite_run.result` event** (no trace context). It carries `test.suite.run.status` (`success` unless a case errored), the case, pass, fail, and error counts, the duration, and the run metadata.
+- **One `gen_ai.evaluation.result` event per score**, parented to the agent's root span, with the `test.*` ids and the run metadata. When the agent raises, it records one event per declared scorer with `error.type` set to the exception class name and no score.
 
 Keep `name` (the suite) stable across runs and give each test case a stable `case_id`. Runs are compared by suite, and test cases are matched by id.
 
 <Aside type="tip">
 Identify the run: `agent_version="..."` (recorded as `gen_ai.agent.version`) and `metadata={"agent.model": "...", "vcs.ref.head.revision": os.environ.get("GITHUB_SHA", "local")}`. The Evaluation runs table shows the agent version and model, and Compare lists their changes.
 </Aside>
+
+### Run ids
+
+Each run gets a generated `test.suite.run.id`. Pass your own with `run_id=` on `evaluate()` or `Benchmark` (TS: `runId`); an empty string is rejected. Results with the same run id form one run:
+
+- **CI shards.** Give every shard the same id, for example derived from `GITHUB_RUN_ID`, so the shards report into one run.
+- **Re-scoring a run.** Upload new scores with `Benchmark(..., run_id=<existing id>)` to add them to that run.
 
 ## GitHub Action
 
@@ -77,7 +76,6 @@ The action ships with the same unreleased SDK change as the evaluation events. U
                 {"case_id": "hamlet", "input": "Who wrote Hamlet?", "expected": "Shakespeare"},
             ],
             scores=[contains_expected],
-            record_io=True,
         )
     ```
 
@@ -182,7 +180,7 @@ The job fails with exit code 1 when an evaluator mean is below its minimum, or w
 
 ### CI/CD attributes
 
-In CI the SDK stamps the OpenTelemetry [CI/CD attributes](https://opentelemetry.io/docs/specs/semconv/registry/attributes/cicd/) on the run event, the case and score events and the agent root spans, so every run links back to the pipeline run that produced it. You don't need to configure anything:
+In CI the SDK stamps the OpenTelemetry [CI/CD attributes](https://opentelemetry.io/docs/specs/semconv/registry/attributes/cicd/) on the grades and the agent root spans, so every run links back to the pipeline run that produced it. You don't need to configure anything:
 
 | Attribute | GitHub Actions | GitLab CI | Jenkins |
 |---|---|---|---|

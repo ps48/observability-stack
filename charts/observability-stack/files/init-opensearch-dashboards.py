@@ -1163,8 +1163,7 @@ def create_agent_evals_config_correlation(workspace_id, traces_pattern_id, evalu
 
     The APM-Config pattern for Agent Traces > Evaluations: one `correlations` saved object per
     workspace naming the traces dataset and the evaluations dataset (the logs dataset over the
-    gen_ai.evaluation.result / opensearch.test_case.result / opensearch.test_suite_run.result
-    events). The Evaluations page reads its index from it, and its Settings modal writes the
+    gen_ai.evaluation.result events). The Evaluations page reads its index from it, and its Settings modal writes the
     same object, so this must stay in step with OpenSearch Dashboards:
     correlationType "AgentEvals-Config-<workspaceId>" ("default" without a workspace),
     entities tracesDataset / evaluationsDataset.
@@ -2150,8 +2149,8 @@ def main():
     service_map_pattern_id = create_index_pattern(
         workspace_id, "otel-v2-apm-service-map*", "timestamp"
     )
-    # Agent evaluation events (gen_ai.evaluation.result, opensearch.test_case.result,
-    # opensearch.test_suite_run.result), routed by Data Prepper to otel-v1-genai-evaluation-*.
+    # Agent evaluation events (gen_ai.evaluation.result), routed by Data Prepper to
+    # otel-v1-genai-evaluation-*.
     # A logs dataset, so Explore Logs queries it with PPL; AgentEvals-Config (below) names it.
     evaluations_schema_mappings = '{"otelLogs":{"timestamp":"time","traceId":"traceId","spanId":"spanId","serviceName":"serviceName"}}'
     evaluations_pattern_id = create_index_pattern(

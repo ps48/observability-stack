@@ -151,7 +151,6 @@ def judge_one(
                 "test.suite.run.id": run_id,
                 "test.suite.name": "eval_canary_llm",
                 "test.case.id": f"canary-{trace_id[:12]}",
-                "test.case.result.status": "pass" if r.test_pass else "fail",
             },
         )
     except Exception as e:  # noqa: BLE001

@@ -12,9 +12,8 @@ AgentCore traces and evaluation scores in OpenSearch Dashboards next to your oth
 
 The importer keeps `traceId`, `spanId`, timestamps, every attribute and the resource `service.name`.
 Evaluation results therefore join the spans they scored. The importer sets the instrumentation
-scope `aws.bedrock_agentcore.evaluations`. Data Prepper copies the evaluation level onto
-`opensearch.evaluation.level` (lowercased) and `session.id` onto `gen_ai.conversation.id`; the
-original attributes stay.
+scope `aws.bedrock_agentcore.evaluations`. To have the Evaluations pages read AgentCore's level
+and session, add the [optional Data Prepper processors](#optional-map-agentcore-fields-in-data-prepper).
 
 ## Prerequisites
 
@@ -110,6 +109,38 @@ Result levels:
 Custom categorical evaluators (pass/fail) have `gen_ai.evaluation.score.label` but no
 `score.value`. AgentCore does not publish CloudWatch metrics for them.
 
+## Optional: map AgentCore fields in Data Prepper
+
+The default pipeline stores AgentCore results as they are. To show their level and session in the
+Evaluations pages, add these processors to the `processor` list of `genai-evaluation-pipeline`,
+after the `copy_values` processor. Edit `docker-compose/data-prepper/pipelines.template.yaml`, and
+with Helm also the chart's Data Prepper pipeline secret
+(`charts/observability-stack/templates/data-prepper-pipeline-secret.yaml`), indented to match
+its `processor` list. They copy
+`aws.bedrock_agentcore.evaluation_level` (lowercased) to `opensearch.evaluation.level` and
+`session.id` to `gen_ai.conversation.id`, only when the target is absent. The original attributes
+stay.
+
+```yaml
+    - add_entries:
+        entries:
+          - key: "/attributes/evl_agentcore_level"
+            value_expression: "/attributes/aws.bedrock_agentcore.evaluation_level"
+            add_when: "/attributes/opensearch.evaluation.level == null and /attributes/aws.bedrock_agentcore.evaluation_level != null"
+    - lowercase_string:
+        with_keys: ["/attributes/evl_agentcore_level"]
+    - add_entries:
+        entries:
+          - key: "/attributes/opensearch.evaluation.level"
+            value_expression: "/attributes/evl_agentcore_level"
+            add_when: "/attributes/evl_agentcore_level != null"
+          - key: "/attributes/gen_ai.conversation.id"
+            value_expression: "/attributes/session.id"
+            add_when: "/attributes/gen_ai.conversation.id == null and /attributes/session.id != null"
+    - delete_entries:
+        with_keys: ["/attributes/evl_agentcore_level"]
+```
+
 ## Limitations
 
 - On-demand evaluations (`agentcore run eval`) return their results only to the caller, so the
@@ -117,9 +148,10 @@ Custom categorical evaluators (pass/fail) have `gen_ai.evaluation.score.label` b
   `/aws/bedrock-agentcore/evaluations/batch-evaluations/results/default`. Add `--include-batch` to
   import them too. They have `aws.bedrock_agentcore.evaluation_job.*` attributes instead of the
   online config attributes.
-- Re-running the importer over the same window is safe for spans, because the span index uses the
-  span ID as the document ID. It creates duplicate evaluation documents. Use `--no-evals`, or
-  choose a window that does not overlap the earlier import.
+- Re-importing the same time range creates duplicate evaluation results, because there is no
+  dedupe key. Import each range once: use `--no-evals` for a repeat, or choose a window that does
+  not overlap the earlier import. Spans are not duplicated, because the span index uses the span
+  ID as the document ID.
 - The importer keeps AgentCore's own timestamps. An evaluation's `timeUnixNano` is set by AgentCore
   and can be a few seconds later than the span it scored. Join on `traceId`/`spanId`, not on time.
 - The importer reads span records from CloudWatch Logs only. It does not read X-Ray segment

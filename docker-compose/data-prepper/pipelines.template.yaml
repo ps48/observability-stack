@@ -13,11 +13,10 @@ otlp-pipeline:
       ssl: false
   # Route telemetry by signal type
   route:
-    # GenAI evaluation results (gen_ai.evaluation.result) and offline evaluation run
-    # records (opensearch.test_case.result, opensearch.test_suite_run.result) are OTel
-    # log-based events. They go to their own index instead of the general logs index.
-    - evaluations: "getEventType() == \"LOG\" and (/eventName == \"gen_ai.evaluation.result\" or /eventName == \"opensearch.test_case.result\" or /eventName == \"opensearch.test_suite_run.result\")"
-    - logs: "getEventType() == \"LOG\" and /eventName != \"gen_ai.evaluation.result\" and /eventName != \"opensearch.test_case.result\" and /eventName != \"opensearch.test_suite_run.result\""
+    # GenAI evaluation results (gen_ai.evaluation.result OTel log events) go to their
+    # own index instead of the general logs index.
+    - evaluations: "getEventType() == \"LOG\" and /eventName == \"gen_ai.evaluation.result\""
+    - logs: "getEventType() == \"LOG\" and /eventName != \"gen_ai.evaluation.result\""
     - traces: "getEventType() == \"TRACE\""
   # Send to appropriate sub-pipelines
   sink:
@@ -92,11 +91,9 @@ traces-raw-pipeline:
         # Use trace analytics index type for automatic index management
         index_type: trace-analytics-plain-raw
 
-# GenAI evaluation results (gen_ai.evaluation.result) and offline evaluation run
-# records (opensearch.test_case.result, opensearch.test_suite_run.result), all
-# OTel log events from the OTLP logs path. One document per event in
-# otel-v1-genai-evaluation-*, linked to the evaluated span by traceId/spanId.
-# Other producers' level and session are copied onto the canonical names (never overwritten).
+# GenAI evaluation results (gen_ai.evaluation.result OTel log events from the OTLP
+# logs path). One document per event in otel-v1-genai-evaluation-*, linked to the
+# evaluated span by traceId/spanId. OpenSearch generates the document ids.
 genai-evaluation-pipeline:
   workers: 2
   delay: 10
@@ -108,31 +105,6 @@ genai-evaluation-pipeline:
         entries:
           - from_key: "time"
             to_key: "@timestamp"
-    # Normalize other producers onto the canonical names: copy, never move, never overwrite.
-    # AgentCore's evaluation level -> opensearch.evaluation.level (lowercased).
-    - add_entries:
-        entries:
-          - key: "/attributes/evl_agentcore_level"
-            value_expression: "/attributes/aws.bedrock_agentcore.evaluation_level"
-            add_when: "/attributes/opensearch.evaluation.level == null and /attributes/aws.bedrock_agentcore.evaluation_level != null"
-    - lowercase_string:
-        with_keys: ["/attributes/evl_agentcore_level"]
-    - add_entries:
-        entries:
-          - key: "/attributes/opensearch.evaluation.level"
-            value_expression: "/attributes/evl_agentcore_level"
-            add_when: "/attributes/evl_agentcore_level != null"
-          # AgentCore's session.id -> gen_ai.conversation.id (OTel).
-          - key: "/attributes/gen_ai.conversation.id"
-            value_expression: "/attributes/session.id"
-            add_when: "/attributes/gen_ai.conversation.id == null and /attributes/session.id != null"
-    - delete_entries:
-        with_keys: ["/attributes/evl_agentcore_level"]
-    # Deterministic id: retries and re-imports of the same result do not duplicate it.
-    - add_entries:
-        entries:
-          - key: "/evaluationId"
-            format: "${/eventName}|${/time}|${/traceId}|${/spanId}|${/attributes/gen_ai.conversation.id}|${/attributes/gen_ai.evaluation.name}|${/attributes/test.case.id}|${/instrumentationScope/name}"
   sink:
     - opensearch:
         hosts: ["OPENSEARCH_PROTOCOL://OPENSEARCH_HOST:OPENSEARCH_PORT"]
@@ -140,7 +112,6 @@ genai-evaluation-pipeline:
         password: OPENSEARCH_PASSWORD
         insecure: true
         index: "otel-v1-genai-evaluation-%{yyyy.MM.dd}"
-        document_id: "${/evaluationId}"
         template_type: index-template
         template_file: /usr/share/data-prepper/templates/genai-evaluation-index-template.json
 

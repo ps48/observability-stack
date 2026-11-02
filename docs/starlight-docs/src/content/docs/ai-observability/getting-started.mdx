@@ -68,7 +68,7 @@ flowchart LR
 | **Enrich spans** | `enrich()` | Sets model, tokens, provider, session ID, and other GenAI attributes on the active span |
 | **Auto-instrument LLMs** | `register(auto_instrument=True)` | OpenAI, Anthropic, Bedrock, LangChain, and 20+ libraries traced automatically |
 | **Score traces** | `score()` | Records evaluation results as OTel log events (`gen_ai.evaluation.result`) linked to the evaluated span |
-| **Run experiments** | `evaluate()` | Runs a task against a dataset with scorer functions; each case is its own trace, plus case and run events |
+| **Run experiments** | `evaluate()` | Runs a task against a dataset with scorer functions; each case is its own trace, plus one result event per score |
 | **Upload results** | `Benchmark` | Uploads pre-computed eval results from RAGAS, DeepEval, pytest, or custom frameworks as the same events |
 | **Query traces** | `OpenSearchTraceRetriever` | Retrieves stored traces from OpenSearch for evaluation pipelines |
 | **AWS production** | `AWSSigV4OTLPExporter` | SigV4-signed exports to OpenSearch Ingestion or OpenSearch Service |

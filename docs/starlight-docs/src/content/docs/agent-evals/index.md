@@ -34,7 +34,7 @@ flowchart LR
 The same event shape covers both ways of evaluating an agent:
 
 - **Online** - score production (or staging) traffic as it happens or shortly after. Call `score()` inline while the agent runs, or run a background job that reads recent traces and writes results for them. The stack's eval canary does this with deterministic checks.
-- **Offline** - run the agent against a fixed dataset of test cases, score every output, and compare the run with earlier runs. `evaluate()` does this in one call and is what you run in CI. In addition to the per-score events, an offline run emits one `opensearch.test_case.result` event per test case and one `opensearch.test_suite_run.result` event per run. That is what powers the **Evaluation runs** and **Compare** views.
+- **Offline** - run the agent against a fixed dataset of test cases, score every output, and compare the run with earlier runs. `evaluate()` does this in one call and is what you run in CI. Its results carry the run and test case ids (`test.suite.run.id`, `test.case.id`), which power the **Evaluation runs** and **Compare** views.
 
 In both cases the agent's own trace is unchanged: the SDK adds no harness spans around it. In an offline run, the agent's root span is stamped with the `test.*` ids so the trace and its test case find each other.
 
@@ -42,7 +42,7 @@ In both cases the agent's own trace is unchanged: the SDK adds no harness spans 
 
 A pass/fail verdict comes only from a rule someone declared. A plain number, or a label such as "correct", is not a verdict; a `pass` / `fail` label is, as in the OpenTelemetry GenAI examples. OpenSearch Dashboards applies these rules in order, and the first that decides wins:
 
-1. **Evaluator error** - `error.type` is set (the evaluator itself failed, so there is no verdict).
+1. **Evaluator error** - `error.type` is set (the evaluator, or in a run the agent, failed, so there is no verdict).
 2. **Producer verdict** - `gen_ai.evaluation.score.label` is `pass` or `fail` (case-insensitive).
 3. **Producer threshold** - `opensearch.evaluation.score.threshold` with `opensearch.evaluation.score.direction`: with `maximize` (the default), values at or above the threshold pass; with `minimize`, values at or below it pass.
 4. **Built-in rules** for a few known third-party evaluators.
@@ -50,17 +50,17 @@ A pass/fail verdict comes only from a rule someone declared. A plain number, or 
 
 The SDKs declare rules for you. Pass `threshold=` or `label="pass"` / `"fail"` to `score()`, or decorate a scorer with `@scorer(threshold=...)`. When a value and a threshold are given, the SDK also records the computed verdict as the label. See [Instrument evaluations](/docs/agent-evals/instrumenting/#declaring-verdicts).
 
-A test case's status follows the same rules on the producer side: `error` if the agent or a scorer raised, else `fail` if any of its scores has a `fail` verdict, else `pass`.
+A test case's status follows from its results: `error` if the agent or a scorer raised, else `fail` if any of its scores has a `fail` verdict, else `pass`.
 
 ## In this section
 
 - **[Quickstart](/docs/agent-evals/quickstart/)** - start the stack, run a sample suite with a mock agent (no model API key), and open the results.
 - **[Instrument evaluations](/docs/agent-evals/instrumenting/)** - `score()`, `@scorer` / `defineScorer`, `evaluate()`, `Benchmark`, and the traces and logs endpoints.
 - **[Offline runs & CI](/docs/agent-evals/offline-runs-ci/)** - run a suite on every pull request with the GitHub Action, link the run, and gate on regressions.
-- **[Data model & storage](/docs/agent-evals/data-model/)** - event attributes, the evaluation index, derived fields, and the evaluations dataset.
+- **[Data model & storage](/docs/agent-evals/data-model/)** - event attributes, the evaluation index, and the evaluations dataset.
 - **[Evaluations UI](/docs/agent-evals/evaluations-ui/)** - Overview, Results, Evaluation runs, Compare, and evaluations in Agent Traces.
 - **[Troubleshooting & limits](/docs/agent-evals/troubleshooting/)** - missing results, "Scored" instead of pass/fail, mapping and paging limits.
-- **[Evaluation integrations](/docs/agent-evals/evaluation-integrations/)** - bring DeepEval, RAGAS, MLflow, and pytest results in with `Benchmark`.
+- **[Evaluation integrations](/docs/agent-evals/evaluation-integrations/)** - bring DeepEval, RAGAS, MLflow, and pytest results in with `Benchmark`, and import Amazon Bedrock AgentCore results.
 
 ## Related
 
