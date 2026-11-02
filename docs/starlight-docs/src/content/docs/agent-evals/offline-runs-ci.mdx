@@ -25,7 +25,7 @@ At the end of the run, it records **one `opensearch.test_suite_run.result` event
 Keep `name` (the suite) stable across runs and give each test case a stable `case_id`. Runs are compared by suite, and test cases are matched by id.
 
 <Aside type="tip">
-Put identifying metadata on the run: `metadata={"agent.version": "...", "agent.model": "...", "vcs.ref.head.revision": os.environ.get("GITHUB_SHA", "local")}`. The Evaluation runs table shows the agent version and model, and Compare lists their changes.
+Identify the run: `agent_version="..."` (recorded as `gen_ai.agent.version`) and `metadata={"agent.model": "...", "vcs.ref.head.revision": os.environ.get("GITHUB_SHA", "local")}`. The Evaluation runs table shows the agent version and model, and Compare lists their changes.
 </Aside>
 
 ## GitHub Action

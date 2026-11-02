@@ -6,12 +6,12 @@ Included by default with the example services (`docker-compose.examples.yml`).
 
 ## Evaluation Signals
 
-Emits **4 `gen_ai.evaluation.result` events** per trace. Each declares its verdict rule (`opensearch.evaluation.assessment`, or `opensearch.evaluation.score.threshold` + `.direction` with the computed assessment), so OpenSearch Dashboards shows pass/fail rather than a neutral "Scored":
+Emits **4 `gen_ai.evaluation.result` events** per trace. Each declares its verdict rule (a `pass` / `fail` `gen_ai.evaluation.score.label`, or `opensearch.evaluation.score.threshold` + `.direction`), so OpenSearch Dashboards shows pass/fail rather than a neutral "Scored":
 
 | Eval Name | What it measures | Value | Pass rule |
 |---|---|---|---|
 | `span_coverage` | Instrumentation health — input, output, and tool spans present | 0.0 / 0.33 / 0.67 / 1.0 | `>= 0.67` |
-| `error_free` | No span in the trace has `status.code=ERROR` | 0 or 1 | explicit assessment |
+| `error_free` | No span in the trace has `status.code=ERROR` | 0 or 1 | explicit `pass` / `fail` label |
 | `tool_call_success_rate` | Fraction of tool calls that returned non-empty results | 0.0–1.0 | `>= 0.5` |
 | `tool_diversity` | Unique tools / total tool calls (catches looping) | 0.0–1.0 | `>= 0.34` |
 
@@ -30,4 +30,4 @@ A trace scored by both gets **5 evaluation results**: `span_coverage`, `error_fr
 
 ## OTel Compliance
 
-Each result is an OTel log event `gen_ai.evaluation.result` ([OTel GenAI events](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-events/)) parented to the evaluated agent span (its `traceId` / `spanId`), with `gen_ai.evaluation.name`, `.score.value`, `.score.label`, `.explanation`, plus `opensearch.evaluation.*` extensions (level, evaluator type, scale, direction, threshold, assessment). Data Prepper routes the events to `otel-v1-genai-evaluation-*`.
+Each result is an OTel log event `gen_ai.evaluation.result` ([OTel GenAI events](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-events/)) parented to the evaluated agent span (its `traceId` / `spanId`), with `gen_ai.evaluation.name`, `.score.value`, `.score.label`, `.explanation`, plus `opensearch.evaluation.*` extensions (level, evaluator type, scale, direction, threshold). Data Prepper routes the events to `otel-v1-genai-evaluation-*`.

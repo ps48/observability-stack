@@ -91,7 +91,7 @@ Agent Evals needs a Python SDK release later than `opensearch-genai-observabilit
             {"case_id": "hamlet", "input": "Who wrote Hamlet?", "expected": "Shakespeare"},
         ],
         scores=[contains_expected, answer_length],
-        metadata={"agent.version": "v1"},
+        agent_version="v1",
         record_io=True,
     )
 
@@ -149,7 +149,7 @@ Agent Evals needs a Python SDK release later than `opensearch-genai-observabilit
 
 7. **Run it again and compare**
 
-    Edit `ANSWERS` so that `"Who wrote Hamlet?"` returns `"William Shakespeare wrote Hamlet."`, change `metadata` to `{"agent.version": "v2"}`, and run the script again. In **Evaluation runs**, select both runs and choose **Compare**. The new run shows one improved test case and a higher pass rate against the baseline. See [Evaluations UI](/docs/agent-evals/evaluations-ui/#compare-runs).
+    Edit `ANSWERS` so that `"Who wrote Hamlet?"` returns `"William Shakespeare wrote Hamlet."`, change `agent_version` to `"v2"`, and run the script again. In **Evaluation runs**, select both runs and choose **Compare**. The new run shows one improved test case and a higher pass rate against the baseline. See [Evaluations UI](/docs/agent-evals/evaluations-ui/#compare-runs).
 
 </Steps>
 

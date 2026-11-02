@@ -60,13 +60,14 @@ def setup_otel() -> LoggerProvider:
 
 
 def score(name, value, trace_id, span_id, label=None, explanation=None,
-          threshold=None, direction="maximize", assessment=None):
+          threshold=None, direction="maximize"):
     """Emit one gen_ai.evaluation.result event parented to the judged span.
 
     Each check declares its verdict rule so readers show pass/fail instead of a
-    neutral "Scored": an explicit ``assessment`` ("pass" / "fail"), or a
-    ``threshold`` + ``direction`` from which the assessment is also computed
-    (the same rule as the SDK's score()). All checks are on a 0..1 scale.
+    neutral "Scored": an explicit ``label`` ("pass" / "fail"), or a
+    ``threshold`` + ``direction`` from which the verdict is computed and
+    recorded as the label (the same rule as the SDK's score()). All checks are
+    on a 0..1 scale.
     """
     attrs = {
         "gen_ai.evaluation.name": name,
@@ -79,11 +80,9 @@ def score(name, value, trace_id, span_id, label=None, explanation=None,
     }
     if threshold is not None:
         attrs["opensearch.evaluation.score.threshold"] = float(threshold)
-        if assessment is None:
+        if label is None:
             ok = value >= threshold if direction == "maximize" else value <= threshold
-            assessment = "pass" if ok else "fail"
-    if assessment is not None:
-        attrs["opensearch.evaluation.assessment"] = assessment
+            label = "pass" if ok else "fail"
     if label:
         attrs["gen_ai.evaluation.score.label"] = label
     if explanation:
@@ -169,8 +168,7 @@ def deterministic_eval(retriever: OpenSearchTraceRetriever, trace_id: str, span_
         value=error_free,
         trace_id=trace_id,
         span_id=span_id,
-        label="No errors" if not has_error else "Has errors",
-        assessment="fail" if has_error else "pass",
+        label="fail" if has_error else "pass",
         explanation="at least one span has status.code=ERROR" if has_error else "all spans OK",
     )
 

@@ -9,7 +9,7 @@ Every result is a gen_ai.evaluation.result log event sent with the OpenSearch Ge
 Data Prepper routes the events to otel-v1-genai-evaluation-*.
 
 Every check declares its verdict rule, so the UI shows pass/fail (not a neutral "Scored"):
-tool_selection and handles_missing_data give an explicit assessment, answer_quality and
+tool_selection and handles_missing_data give an explicit pass / fail label, answer_quality and
 session_goal_success pass at 4 or more on a 1-5 scale, latency_budget passes at 12 s or less.
 """
 
@@ -201,12 +201,11 @@ def run_experiment(version: str) -> None:
         missing = sorted(want - got)
         return EvalScore(
             name="tool_selection", value=hit, label="pass" if hit == 1 else "fail",
-            assessment="pass" if hit == 1 else "fail",
             explanation=(f"Called {sorted(got) or 'no tools'}; expected {sorted(want)}."
                          + (f" Missing {missing}." if missing else "")),
         )
 
-    # Lower is better: pass at LATENCY_BUDGET_S or less (assessment computed by the SDK).
+    # Lower is better: pass at LATENCY_BUDGET_S or less (verdict computed by the SDK).
     @scorer(name="latency_budget", direction="minimize", threshold=LATENCY_BUDGET_S,
             score_min=0, score_max=2 * LATENCY_BUDGET_S, evaluator_type="code")
     def latency_budget(input: str, output: str, expected: str) -> EvalScore:
@@ -229,7 +228,8 @@ def run_experiment(version: str) -> None:
         task=task,
         data=[{k: c[k] for k in ("input", "expected", "case_id", "case_name")} for c in DATASET],
         scores=[tool_selection, quality, latency_budget],
-        metadata={"agent.version": version, "agent.model": MODEL_ID},
+        agent_version=version,
+        metadata={"agent.model": MODEL_ID},
         record_io=True,
     )
     print(result.summary)
@@ -271,7 +271,7 @@ def run_online(n: int, version: str) -> None:
                                                             "could not find", "doesn't exist", "not a real"))
                 handled = refusal or "atlantis" not in message.lower()
                 score(name="handles_missing_data", value=1.0 if handled else 0.0,
-                      label="pass" if handled else "fail", assessment="pass" if handled else "fail",
+                      label="pass" if handled else "fail",
                       score_min=0.0, score_max=1.0,
                       explanation="Unknown destinations must be reported, not invented.",
                       evaluator="missing_data_check", evaluator_type="code",

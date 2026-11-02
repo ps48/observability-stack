@@ -43,12 +43,12 @@ In both cases the agent's own trace is unchanged: the SDK adds no harness spans 
 A pass/fail verdict comes only from a rule someone declared. A plain number, or a label such as "correct", is not a verdict; a `pass` / `fail` label is, as in the OpenTelemetry GenAI examples. OpenSearch Dashboards applies these rules in order, and the first that decides wins:
 
 1. **Evaluator error** - `error.type` is set (the evaluator itself failed, so there is no verdict).
-2. **Producer verdict** - `gen_ai.evaluation.score.label` is `pass` or `fail` (case-insensitive). Results from older SDKs that sent `opensearch.evaluation.assessment` are still read.
+2. **Producer verdict** - `gen_ai.evaluation.score.label` is `pass` or `fail` (case-insensitive).
 3. **Producer threshold** - `opensearch.evaluation.score.threshold` with `opensearch.evaluation.score.direction`: with `maximize` (the default), values at or above the threshold pass; with `minimize`, values at or below it pass.
 4. **Built-in rules** for a few known third-party evaluators.
 5. Otherwise **Scored**: shown in gray, with its mean or top label, and left out of pass rates.
 
-The SDKs declare rules for you. Pass `threshold=` or `assessment=` to `score()`, or decorate a scorer with `@scorer(threshold=...)`. When a value and a threshold are given, the SDK also records the computed verdict as the label. See [Instrument evaluations](/docs/agent-evals/instrumenting/#declaring-verdicts).
+The SDKs declare rules for you. Pass `threshold=` or `label="pass"` / `"fail"` to `score()`, or decorate a scorer with `@scorer(threshold=...)`. When a value and a threshold are given, the SDK also records the computed verdict as the label. See [Instrument evaluations](/docs/agent-evals/instrumenting/#declaring-verdicts).
 
 A test case's status follows the same rules on the producer side: `error` if the agent or a scorer raised, else `fail` if any of its scores has a `fail` verdict, else `pass`.
 

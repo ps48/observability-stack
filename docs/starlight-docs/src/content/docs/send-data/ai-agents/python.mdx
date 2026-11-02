@@ -297,10 +297,10 @@ score(name="accuracy", value=0.95, trace_id="6ebb9835f43af1552f2cebb9f5165e39",
 
 # Score a whole trace with an explicit verdict
 score(name="task_success", value=1.0, trace_id="6ebb9835f43af1552f2cebb9f5165e39",
-      assessment="pass", explanation="Booked the requested flight")
+      label="pass", explanation="Booked the requested flight")
 ```
 
-Without `threshold` or `assessment`, a result shows as "Scored" (no pass/fail). For all parameters, inline scoring, session-level results, `evaluate()`, `Benchmark`, and `OpenSearchTraceRetriever`, see [Instrument evaluations](/docs/agent-evals/instrumenting/).
+Without `threshold` or a `pass` / `fail` `label`, a result shows as "Scored" (no pass/fail). For all parameters, inline scoring, session-level results, `evaluate()`, `Benchmark`, and `OpenSearchTraceRetriever`, see [Instrument evaluations](/docs/agent-evals/instrumenting/).
 
 ---
 

@@ -104,7 +104,7 @@ score(
 
 # Trace-level: only a trace id is known. No span id is invented; the event carries
 # the trace id as its own traceId (no spanId) and level "trace".
-score("task_success", 1.0, trace_id="6ebb9835f43af1552f2cebb9f5165e39", assessment="pass")
+score("task_success", 1.0, trace_id="6ebb9835f43af1552f2cebb9f5165e39", label="pass")
 
 # Session-level: judge a whole conversation
 score("goal_success", 5.0, conversation_id="session-42", level="session", threshold=4, score_min=1, score_max=5)
@@ -141,7 +141,7 @@ score({
 });
 
 // Trace-level and session-level
-score({ name: "task_success", value: 1, traceId: "6ebb9835f43af1552f2cebb9f5165e39", assessment: "pass" });
+score({ name: "task_success", value: 1, traceId: "6ebb9835f43af1552f2cebb9f5165e39", label: "pass" });
 score({ name: "goal_success", value: 5, conversationId: "session-42", level: "session", threshold: 4 });
 ```
 
@@ -165,7 +165,6 @@ The Python name is listed first, then the TypeScript name where it differs.
 | `threshold` | `opensearch.evaluation.score.threshold` | Pass threshold (see below). |
 | `direction` | `opensearch.evaluation.score.direction` | `maximize` (default with a threshold) or `minimize`. |
 | `score_min` / `scoreMin`, `score_max` / `scoreMax` | `opensearch.evaluation.score.min` / `.max` | Scale bounds. Used to normalize charts and deltas. |
-| `assessment` | `gen_ai.evaluation.score.label` | Explicit verdict: `pass` or `fail` (booleans accepted), recorded as the label. |
 | `conversation_id` / `conversationId` | `gen_ai.conversation.id` | Evaluated session. |
 | `agent_name` / `agentName` | `gen_ai.agent.name` | Evaluated agent. |
 | `response_id` / `responseId` | `gen_ai.response.id` | Evaluated completion. |
@@ -180,10 +179,10 @@ Results without a declared rule show as **Scored**, not pass/fail. You can decla
 ```python
 score("answer_quality", 3.0, threshold=4, score_min=1, score_max=5)  # label=fail
 score("latency_s", 9.2, threshold=12, direction="minimize")          # label=pass
-score("tool_selection", 1.0, assessment="pass")                      # explicit verdict
+score("tool_selection", 1.0, label="pass")                           # explicit verdict
 ```
 
-- **`assessment`** - an explicit verdict. It always wins, and replaces a `label`. Invalid values are dropped with a warning.
+- **`label`** `pass` or `fail` (case-insensitive) - an explicit verdict. It wins over a threshold.
 - **`threshold`** (+ `direction`) - the SDK records the threshold and, unless you set a `label`, also computes the verdict. With `maximize`, the result passes when `value >= threshold`; with `minimize`, it passes when `value <= threshold`.
 
 The verdict is recorded as `gen_ai.evaluation.score.label` = `pass` or `fail`, as in the OpenTelemetry GenAI examples. Any producer can send it: a `pass` / `fail` label (case-insensitive) decides the verdict in OpenSearch Dashboards.
@@ -221,7 +220,8 @@ evaluate(
     task=travel_agent,
     data=[{"case_id": "lisbon", "input": "Cheapest flight to Lisbon?", "expected": "Lisbon"}],
     scores=[mentions_price, on_topic, answer_quality],
-    metadata={"agent.version": "v2", "agent.model": "my-model"},
+    agent_version="v2",                           # gen_ai.agent.version
+    metadata={"agent.model": "my-model"},
     record_io=True,                               # store input, expected, output on the case event
 )
 provider.force_flush()
@@ -248,7 +248,7 @@ evaluate({
   task: (input) => travelAgent(input),       // synchronous
   data: [{ caseId: "lisbon", input: "Cheapest flight to Lisbon?", expected: "Lisbon" }],
   scores: [mentionsPrice, onTopic],
-  metadata: { "agent.version": "v2" },
+  agentVersion: "v2",
   recordIo: true,
 });
 await provider.forceFlush();
@@ -265,7 +265,7 @@ await provider.forceFlush();
 - `evaluator` - `opensearch.evaluation.evaluator.name`. Defaults to the function name.
 - `evaluator_type` (TS: `evaluatorType`).
 
-Fields set on a returned `EvalScore` (`assessment`, `passed`, `threshold`, `direction`, bounds) take precedence over the declaration.
+Fields set on a returned `EvalScore` (`label`, `passed`, `threshold`, `direction`, bounds) take precedence over the declaration.
 
 **Status and errors:**
 
@@ -278,7 +278,7 @@ Fields set on a returned `EvalScore` (`assessment`, `passed`, `threshold`, `dire
 
 **Test ids.** `test.suite.run.id` and `test.case.id` are proposed OpenTelemetry attributes ([semantic-conventions#1262](https://github.com/open-telemetry/semantic-conventions/issues/1262), [semantic-conventions-genai#79](https://github.com/open-telemetry/semantic-conventions-genai/issues/79)); the other `test.*` names are OpenTelemetry's.
 
-**Run metadata.** `metadata` is copied to the case and run events. The Evaluations UI reads `agent.version` and `agent.model` for the Agent version and Model columns. It also shows Tokens and Cost columns when metadata keys end in `tokens` or contain `cost`.
+**Run metadata.** `metadata` is copied to the case and run events. The Evaluations UI reads `agent.model` for the Model column; the Agent version column is `gen_ai.agent.version` (`agent_version=` / `agentVersion`). It also shows Tokens and Cost columns when metadata keys end in `tokens` or contain `cost`.
 
 <Aside type="note">
 `evaluate()` stamps root spans through a span processor on the global SDK `TracerProvider`, so instrument the agent with the global provider (`@observe` after `register()`). If the task starts no span, the case and score events carry no trace context. In TypeScript, `task` must be synchronous. With an OTel JS 2.x provider, add `TestCaseSpanProcessor` to it yourself. Scorers run outside the agent trace, so a traced LLM judge gets its own trace.
@@ -291,7 +291,7 @@ Use `Benchmark` when another tool already produced the scores. Each `log()` emit
 ```python
 from opensearch_genai_observability_sdk_py import Benchmark, EvalScore
 
-with Benchmark(name="nightly-eval", metadata={"agent.version": "v3"}, record_io=True) as b:
+with Benchmark(name="nightly-eval", agent_version="v3", record_io=True) as b:
     b.log(input="What is Python?", output="A language", scores={"accuracy": 1.0})
     b.log(
         input="Capital of France?",

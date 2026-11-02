@@ -27,14 +27,14 @@ curl -sk -u 'admin:My_password_123!@#' \
 
 "Scored" means no rule decides the verdict. A numeric value alone isn't a verdict, and neither is a label such as `pass`. Declare one of these:
 
-- `assessment="pass"` / `"fail"` on `score()`, or return a `bool` or an `EvalScore(passed=...)` from a scorer
+- `label="pass"` / `"fail"` on `score()`, or return a `bool` or an `EvalScore(passed=...)` from a scorer
 - `threshold=` (and `direction="minimize"` when lower is better) on `score()`, `@scorer(...)`, or `defineScorer(...)`
 
 Results already stored keep their verdict. New results get the rule. Test case status follows the same rules: a case with only undeclared scores is `pass` unless something raised.
 
 ## A run shows no test cases, or no trace links
 
-- **"The producer sent no run event"** - the run was uploaded without `opensearch.test_case.result` / `opensearch.test_suite_run.result` events (older SDKs or a third-party producer). The run still shows, with counts computed from its grades.
+- **"The producer sent no run event"** - the run was uploaded without `opensearch.test_case.result` / `opensearch.test_suite_run.result` events (for example, a third-party producer). The run still shows, with counts computed from its grades.
 - **No trace on a test case** - the task started no span. Decorate the agent with `@observe(...)` and call `register()` first, so the root span is created on the global provider. In TypeScript the task must be synchronous. For `Benchmark`, pass `trace_id` and `span_id` to `log()`.
 - **Runs don't line up in Compare** - keep the suite name and `case_id`s stable across runs. Compare matches test cases by id and warns when the runs have different cases or evaluators.
 

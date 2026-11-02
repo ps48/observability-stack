@@ -348,10 +348,10 @@ score({
 });
 
 // Trace-level (no span id is invented), with an explicit verdict
-score({ name: "task_success", value: 1, traceId: "6ebb9835f43af1552f2cebb9f5165e39", assessment: "pass" });
+score({ name: "task_success", value: 1, traceId: "6ebb9835f43af1552f2cebb9f5165e39", label: "pass" });
 ```
 
-Without `threshold` or `assessment`, a result shows as "Scored" (no pass/fail). For all parameters and session-level results, see [Instrument evaluations](/docs/agent-evals/instrumenting/#score-one-result).
+Without `threshold` or a `pass` / `fail` `label`, a result shows as "Scored" (no pass/fail). For all parameters and session-level results, see [Instrument evaluations](/docs/agent-evals/instrumenting/#score-one-result).
 
 ---
 
@@ -373,7 +373,7 @@ const result = evaluate({
     { caseId: "rain", input: "What causes rain?", expected: "water vapor" },
   ],
   scores: [accuracy],
-  metadata: { "agent.version": "v2" },
+  agentVersion: "v2",
   recordIo: true,
 });
 

@@ -175,9 +175,6 @@
                         }
                       }
                     },
-                    "assessment": {
-                      "type": "keyword"
-                    },
                     "evaluator": {
                       "properties": {
                         "name": {
@@ -192,9 +189,6 @@
                       }
                     },
                     "level": {
-                      "type": "keyword"
-                    },
-                    "trace_id": {
                       "type": "keyword"
                     },
                     "judge": {
@@ -269,9 +263,6 @@
                       "type": "keyword"
                     },
                     "source": {
-                      "type": "keyword"
-                    },
-                    "target_trace_id": {
                       "type": "keyword"
                     }
                   }
@@ -365,13 +356,6 @@
                       }
                     }
                   }
-                }
-              }
-            },
-            "agent": {
-              "properties": {
-                "version": {
-                  "type": "keyword"
                 }
               }
             },
