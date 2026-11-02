@@ -299,7 +299,7 @@ with Benchmark(name="nightly-eval", agent_version="v3") as b:
     )
 ```
 
-`log()` also accepts `case_id` and `case_name`. Pass `run_id=` (TS: `runId`) to add results to an existing run, see [Run ids](/docs/agent-evals/offline-runs-ci/#run-ids). Examples for DeepEval, RAGAS, MLflow, and pytest are in [Evaluation integrations](/docs/agent-evals/evaluation-integrations/).
+`log()` also accepts `case_id` and `case_name`, and `error_type` (TS: `errorType`) when the agent failed on a case: every score of that case is then stored as an evaluator error with no score. Pass `run_id=` (TS: `runId`) to add results to an existing run, see [Run ids](/docs/agent-evals/offline-runs-ci/#run-ids). Examples for DeepEval, RAGAS, MLflow, and pytest are in [Evaluation integrations](/docs/agent-evals/evaluation-integrations/).
 
 ## Scoring stored traces
 
