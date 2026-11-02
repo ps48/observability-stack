@@ -100,7 +100,7 @@ The action ships with the same unreleased SDK change as the evaluation events. U
     ```text
     ## Agent evaluation results
 
-    - **my-agent-suite** run `run_20261030_001922_b91e7118`: [open in OpenSearch Dashboards](http://localhost:5601/app/agentTraces/evaluations#/?_a=(tab:runs,run:'run_20261030_001922_b91e7118'))
+    - **my-agent-suite** run `run_20261030_001922_b91e7118`: [open in OpenSearch Dashboards](http://localhost:5601/app/agentTraces/evaluations#/runs/run_20261030_001922_b91e7118)
       - cases: 2 (pass 1, fail 1, error 0), duration 0.0s
 
     | Evaluator | Mean | Pass (>= 0.5) | Fail | Scores | Threshold |
@@ -175,7 +175,7 @@ The action ships with the same unreleased SDK change as the evaluation events. U
 The action has two outputs. `run-id` is the run's `test.suite.run.id`. `run-url` is a link to the run page:
 
 ```text
-<dashboards-url>/app/agentTraces/evaluations#/?_a=(tab:runs,run:'<test.suite.run.id>')
+<dashboards-url>/app/agentTraces/evaluations#/runs/<test.suite.run.id>
 ```
 
 The job fails with exit code 1 when an evaluator mean is below its minimum, or when a gated evaluator produced no scores. Exit code 2 means a configuration error.
