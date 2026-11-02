@@ -22,9 +22,19 @@ tests:
       - matchRegex:
           path: stringData["pipelines.yaml"]
           pattern: 'template_file: /usr/share/data-prepper/templates/genai-evaluation-index-template.json'
+
+  - it: should copy other producers' level and session onto the canonical names, never derived fields
+    template: templates/data-prepper-pipeline-secret.yaml
+    asserts:
       - matchRegex:
           path: stringData["pipelines.yaml"]
-          pattern: 'startsWith\(/instrumentationScope/name, "aws.bedrock_agentcore"\)'
+          pattern: 'key: "/attributes/opensearch.evaluation.level"'
+      - matchRegex:
+          path: stringData["pipelines.yaml"]
+          pattern: 'add_when: "/attributes/gen_ai.conversation.id == null and /attributes/session.id != null"'
+      - notMatchRegex:
+          path: stringData["pipelines.yaml"]
+          pattern: 'attributes/derived\.'
 
   - it: should ship the index template in the data-prepper-templates ConfigMap
     template: templates/data-prepper-templates-configmap.yaml

@@ -11,8 +11,10 @@ AgentCore traces and evaluation scores in OpenSearch Dashboards next to your oth
 | Online evaluation results: `/aws/bedrock-agentcore/evaluations/results/<online-eval-config-id>` | OTLP LogRecords with `eventName: gen_ai.evaluation.result` to `/v1/logs` | `otel-v1-genai-evaluation-*` |
 
 The importer keeps `traceId`, `spanId`, timestamps, every attribute and the resource `service.name`.
-Evaluation results therefore join the spans they scored. Data Prepper adds the
-`attributes.derived.*` fields and sets `attributes.derived.evaluation.source` to `agentcore`.
+Evaluation results therefore join the spans they scored. The importer sets the instrumentation
+scope `aws.bedrock_agentcore.evaluations`. Data Prepper copies the evaluation level onto
+`opensearch.evaluation.level` (lowercased) and `session.id` onto `gen_ai.conversation.id`; the
+original attributes stay.
 
 ## Prerequisites
 
@@ -63,7 +65,7 @@ not 0.
 ```bash
 # Evaluation results (one document per result)
 curl -sk -u 'admin:My_password_123!@#' \
-  'https://localhost:9200/otel-v1-genai-evaluation-*/_search?q=attributes.derived.evaluation.source:agentcore&size=3'
+  'https://localhost:9200/otel-v1-genai-evaluation-*/_search?q=instrumentationScope.name:aws.bedrock_agentcore.evaluations&size=3'
 
 # Spans
 curl -sk -u 'admin:My_password_123!@#' \

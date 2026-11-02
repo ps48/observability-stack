@@ -1,6 +1,6 @@
 ---
 title: "Evaluation Data Model & Storage"
-description: "The evaluation event contract (gen_ai.evaluation.result, opensearch.test_case.result, opensearch.test_suite_run.result), the otel-v1-genai-evaluation index, derived fields, and the evaluations dataset"
+description: "The evaluation event contract (gen_ai.evaluation.result, opensearch.test_case.result, opensearch.test_suite_run.result), the otel-v1-genai-evaluation index, normalization, and the evaluations dataset"
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -99,13 +99,14 @@ The pipeline also does three more things:
 
 - It copies `time` to `@timestamp`.
 - It sets the document id to a hash of event name, time, trace and span ids, session, evaluation name, test case, and scope. A retried export or a re-import of the same result overwrites the document instead of duplicating it.
-- It adds **derived fields** under `attributes.derived.*`, so that readers don't have to reimplement fallbacks:
+- It **normalizes other producers onto the canonical names**, so every reader uses one set of fields. It copies and never moves, so the producer's original attributes stay, and it never overwrites a canonical field the producer set itself:
 
-| Field | Rule |
+| Canonical field | Copied from, when the canonical field is absent |
 |---|---|
-| `derived.evaluation.level` | `opensearch.evaluation.level`; otherwise a level reported by a known third-party evaluator; otherwise `span` when the record has a span id, else `trace` (grades only) |
-| `derived.evaluation.source` | `opensearch-sdk` when the scope name starts with `opensearch-genai-observability-sdk`; a known third-party source when recognized; otherwise `otel` (grades only) |
-| `derived.session.id` | `gen_ai.conversation.id`, else `session.id` |
+| `opensearch.evaluation.level` | A level reported by a known third-party evaluator, lowercased |
+| `gen_ai.conversation.id` | `session.id` |
+
+The pipeline does not guess values. When a result has no level, readers treat it as `span` if it has a span id and `trace` otherwise. Who produced a result is the instrumentation scope name (`instrumentationScope.name`): `opensearch-genai-observability-sdk-*` for the OpenSearch GenAI SDKs, otherwise the producer's own scope.
 
 The Helm chart ships the same pipeline, index template (as a ConfigMap), and init job as Docker Compose.
 
@@ -115,7 +116,7 @@ The init script's ISM retention policies cover spans, logs, and service maps, bu
 
 ## Joining results to traces
 
-Results join to agent spans (`otel-v1-apm-span-*`) on `traceId`, plus `spanId` for span- and tool-call-level results. They join to sessions on `attributes.derived.session.id` = the span attribute `gen_ai.conversation.id`.
+Results join to agent spans (`otel-v1-apm-span-*`) on `traceId`, plus `spanId` for span- and tool-call-level results. They join to sessions on `attributes.gen_ai.conversation.id` = the span attribute `gen_ai.conversation.id`.
 
 Example PPL queries:
 
